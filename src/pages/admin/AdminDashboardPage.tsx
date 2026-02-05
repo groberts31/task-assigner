@@ -322,7 +322,85 @@ const title = useMemo(() => (isAdmin ? "Admin Dashboard" : "Manager Dashboard"),
       setTaskMsg("Could not remove task.");
     }
   };
-  return (
+  
+  // -----------------------------
+  // SHEETS (restored)
+  // -----------------------------
+  type AssignmentRow = {
+    id: string;
+    employeeId: string;
+    taskIds: string[];
+    createdAt: string;
+    createdBy?: string;
+  };
+
+  const ASSIGNMENTS_KEY = "ta_assignments";
+
+  const readAssignments = (): AssignmentRow[] => {
+    try {
+      const raw = localStorage.getItem(ASSIGNMENTS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((x) => x && typeof x === "object")
+        .map((x) => ({
+          id: String((x as any).id ?? ""),
+          employeeId: String((x as any).employeeId ?? ""),
+          taskIds: Array.isArray((x as any).taskIds) ? (x as any).taskIds.map(String) : [],
+          createdAt: String((x as any).createdAt ?? new Date().toISOString()),
+          createdBy: (x as any).createdBy ? String((x as any).createdBy) : undefined,
+        }))
+        .filter((x) => x.id && x.employeeId);
+    } catch {
+      return [];
+    }
+  };
+
+  const [sheetsEmployeeId, setSheetsEmployeeId] = useState<string>("__ALL__");
+  const [sheetsMsg, setSheetsMsg] = useState<string>("");
+  const [assignments, setAssignments] = useState<AssignmentRow[]>(() => readAssignments());
+
+  const reloadSheets = () => {
+    setAssignments(readAssignments());
+    setSheetsMsg("Refreshed.");
+    setTimeout(() => setSheetsMsg(""), 1200);
+  };
+
+  const taskTitleById = (taskId: string) => {
+    try {
+      // @ts-ignore - tasks exists in your dashboard when Tasks/Assign are restored
+      const t = (tasks || []).find((x: any) => x.id === taskId);
+      return t?.title || "Unknown task";
+    } catch {
+      return "Unknown task";
+    }
+  };
+
+  const assignmentsByEmployee = (employeeId: string) => {
+    return assignments
+      .filter((a) => a.employeeId === employeeId)
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  };
+
+
+
+  // Employees visible to this dashboard
+  const visibleEmployees = useMemo(() => {
+    // @ts-ignore
+    const allUsers = (users || []) as any[];
+    const employees = allUsers.filter((u) => u.role === "employee");
+
+    if (isAdmin) return employees;
+
+    const meId = user?.id || "";
+    return employees.filter((u) => (u.createdBy || "") === meId);
+  }, [isAdmin, user?.id
+    // @ts-ignore
+    , users]);
+
+
+return (
     <div className="container" style={{ paddingTop: 18, paddingBottom: 30 }}>
       <div className="card" style={{ marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
@@ -702,14 +780,161 @@ const title = useMemo(() => (isAdmin ? "Admin Dashboard" : "Manager Dashboard"),
           </div>
         </div>
       )}
+      
       {tab === "sheets" && (
         <div className="card">
           <h3 style={{ marginTop: 0 }}>Sheets</h3>
-          <div className="muted" style={{ fontSize: 13 }}>
-            (Placeholder) Next we’ll restore per-employee sheets + all-users export.
+          <div className="muted" style={{ fontSize: 13, marginTop: 6, marginBottom: 12 }}>
+            Per-employee sheets + all-employees view. Data is loaded from local storage.
+          </div>
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
+            <label style={{ minWidth: 120 }}>Employee</label>
+            <select
+              value={sheetsEmployeeId}
+              onChange={(e) => setSheetsEmployeeId(e.target.value)}
+              style={{ maxWidth: 420, width: "100%" }}
+            >
+              <option value="__ALL__">All employees</option>
+              {visibleEmployees.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name} ({e.email})
+                </option>
+              ))}
+            </select>
+
+            <button className="btn-ghost" onClick={() => reloadSheets()}>
+              Refresh
+            </button>
+
+            <button className="btn-primary" onClick={() => window.print()}>
+              Print
+            </button>
+          </div>
+
+          {sheetsMsg && (
+            <div className="muted" style={{ fontSize: 13, padding: "8px 0" }}>
+              {sheetsMsg}
+            </div>
+          )}
+
+          <div style={{ display: "grid", gap: 14 }}>
+            {sheetsEmployeeId === "__ALL__" ? (
+              <div className="card" style={{ padding: 14 }}>
+                <h4 style={{ marginTop: 0 }}>All Employees</h4>
+                <div className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
+                  Shows a summary per employee, then their assignment rows.
+                </div>
+
+                {visibleEmployees.length === 0 ? (
+                  <div className="muted">No employees found for this profile.</div>
+                ) : (
+                  visibleEmployees.map((emp) => (
+                    <div
+                      key={emp.id}
+                      style={{
+                        borderTop: "1px solid rgba(255,255,255,0.08)",
+                        paddingTop: 12,
+                        marginTop: 12,
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                        <div>
+                          <div style={{ fontWeight: 800 }}>{emp.name}</div>
+                          <div className="muted" style={{ fontSize: 12 }}>
+                            {emp.email}
+                            {emp.phone ? " • " + emp.phone : ""}
+                          </div>
+                        </div>
+                        <div className="muted" style={{ fontSize: 12 }}>
+                          Assignments: {assignmentsByEmployee(emp.id).length}
+                        </div>
+                      </div>
+
+                      <div style={{ marginTop: 10 }}>
+                        {assignmentsByEmployee(emp.id).length === 0 ? (
+                          <div className="muted" style={{ fontSize: 13 }}>
+                            No assignments yet.
+                          </div>
+                        ) : (
+                          <table className="table">
+                            <thead>
+                              <tr>
+                                <th style={{ width: 180 }}>Date</th>
+                                <th>Tasks</th>
+                                <th style={{ width: 120 }}>Type</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {assignmentsByEmployee(emp.id).map((a) => (
+                                <tr key={a.id}>
+                                  <td className="muted">{new Date(a.createdAt).toLocaleString()}</td>
+                                  <td>{a.taskIds.map((id) => taskTitleById(id)).join(", ")}</td>
+                                  <td className="muted">{a.createdBy === "system" ? "System" : "Custom"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            ) : (
+              <div className="card" style={{ padding: 14 }}>
+                {(() => {
+                  const emp = visibleEmployees.find((x) => x.id === sheetsEmployeeId);
+                  if (!emp) return <div className="muted">Employee not found.</div>;
+                  const rows = assignmentsByEmployee(emp.id);
+
+                  return (
+                    <div>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                        <div>
+                          <h4 style={{ margin: 0 }}>{emp.name}</h4>
+                          <div className="muted" style={{ fontSize: 12 }}>
+                            {emp.email}
+                            {emp.phone ? " • " + emp.phone : ""}
+                          </div>
+                        </div>
+                        <div className="muted" style={{ fontSize: 12 }}>Assignments: {rows.length}</div>
+                      </div>
+
+                      <div style={{ marginTop: 12 }}>
+                        {rows.length === 0 ? (
+                          <div className="muted" style={{ fontSize: 13 }}>
+                            No assignments yet for this employee.
+                          </div>
+                        ) : (
+                          <table className="table">
+                            <thead>
+                              <tr>
+                                <th style={{ width: 180 }}>Date</th>
+                                <th>Tasks</th>
+                                <th style={{ width: 120 }}>Type</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rows.map((a) => (
+                                <tr key={a.id}>
+                                  <td className="muted">{new Date(a.createdAt).toLocaleString()}</td>
+                                  <td>{a.taskIds.map((id) => taskTitleById(id)).join(", ")}</td>
+                                  <td className="muted">{a.createdBy === "system" ? "System" : "Custom"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
           </div>
         </div>
       )}
-    </div>
+</div>
   );
 }
