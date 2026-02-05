@@ -1,0 +1,97 @@
+/* FullCalendar base layout tweaks (no package CSS imports needed) */
+
+.schedule-wrap .fc {
+  --fc-border-color: rgba(255,255,255,0.12);
+  --fc-page-bg-color: transparent;
+  --fc-neutral-bg-color: rgba(255,255,255,0.04);
+  --fc-today-bg-color: rgba(120, 180, 255, 0.14);
+  --fc-now-indicator-color: rgba(255, 90, 140, 0.9);
+  color: rgba(240,244,255,0.92);
+}
+
+.schedule-wrap .fc .fc-toolbar-title {
+  font-weight: 900;
+  letter-spacing: 0.2px;
+}
+
+.schedule-wrap .fc .fc-button {
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.06);
+}
+
+.schedule-wrap .fc .fc-button:hover {
+  background: rgba(255,255,255,0.10);
+}
+
+.schedule-wrap .fc .fc-button-primary:not(:disabled).fc-button-active,
+.schedule-wrap .fc .fc-button-primary:not(:disabled):active {
+  background: rgba(80, 150, 255, 0.45);
+  border-color: rgba(120, 180, 255, 0.55);
+}
+
+.schedule-wrap .fc .fc-scrollgrid,
+.schedule-wrap .fc .fc-scrollgrid-section-header > * {
+  background: rgba(0,0,0,0.18);
+}
+
+.schedule-wrap .fc .fc-col-header-cell-cushion {
+  padding: 8px 6px;
+  font-weight: 800;
+}
+
+.schedule-wrap .fc .fc-timegrid-slot-label-cushion {
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.schedule-wrap .fc .fc-event {
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.18);
+  padding: 2px 6px;
+}
+
+.schedule-wrap .fc .fc-event-title {
+  font-weight: 800;
+}
+
+.schedule-wrap .fc .fc-event-time {
+  font-size: 11px;
+  opacity: 0.9;
+}
+
+/* Make the calendar fit inside the card cleanly */
+.schedule-calendar-card {
+  overflow: hidden;
+  border-radius: 26px;
+}
+
+.schedule-calendar-inner {
+  padding: 14px;
+}
+
+/* Simple form styling */
+.schedule-form-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr 1fr;
+}
+
+@media (max-width: 820px) {
+  .schedule-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* Mobile schedule fit */
+@media (max-width: 820px) {
+  .schedule-wrap .fc .fc-button {
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+
+  .schedule-wrap .fc .fc-event {
+    border-radius: 10px;
+  }
+}

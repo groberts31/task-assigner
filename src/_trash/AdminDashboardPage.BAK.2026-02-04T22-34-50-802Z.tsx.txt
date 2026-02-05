@@ -1,0 +1,1270 @@
+import { useMemo, useState } from "react";
+import { Navigate, useNavigate } from "react-router-dom";
+import { useAuth } from "../../state/auth";
+import type { User } from "../../data/types";
+import { Storage } from "../../data/storage";
+
+type TabKey = "approvals" | "users" | "tasks" | "assign" | "sheets";
+
+type NewUserForm = {
+  name: string;
+  email: string;
+  phone: string;
+  password: string;
+  role: User["role"];
+};
+
+function normalizeEmail(v: string) {
+  return v.trim().toLowerCase();
+}
+function normalizePhone(v: string) {
+  return v.trim();
+}
+
+// -----------------------------
+// TASK DB (self-contained, stable)
+// -----------------------------
+type TaskItem = {
+  id: string;
+  title: string;
+  description?: string;
+  category?: string;
+  defaultDurationMins?: number;
+  createdBy: "system" | string; // "system" or userId
+  createdAt: string; // ISO
+};
+
+const TASKS_KEY = "twe_tasks_v1";
+
+function readJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+function writeJson(key: string, value: any) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function seedSystemTasksIfEmpty() {
+  const existing = readJson<TaskItem[]>(TASKS_KEY, []);
+  if (existing.length > 0) return existing;
+
+  const now = new Date().toISOString();
+  const seed: TaskItem[] = [
+    {
+      id: "sys_open_1",
+      title: "Open: Bay walk-through + safety check",
+      description: "Check cones, hoses, chemicals secured, slip hazards, and signage before first car.",
+      category: "Operations",
+      defaultDurationMins: 10,
+      createdBy: "system",
+      createdAt: now,
+    },
+    {
+      id: "sys_open_2",
+      title: "Open: Equipment warm-up + test run",
+      description: "Test pay station, gate, wash cycle start/stop, and vacuums.",
+      category: "Equipment",
+      defaultDurationMins: 12,
+      createdBy: "system",
+      createdAt: now,
+    },
+    {
+      id: "sys_ops_1",
+      title: "Mid-shift: Lot appearance reset",
+      description: "Empty trash, pick up litter, straighten towels/merch, wipe pay station.",
+      category: "Customer Experience",
+      defaultDurationMins: 15,
+      createdBy: "system",
+      createdAt: now,
+    },
+    {
+      id: "sys_ops_2",
+      title: "Chemical levels + usage check",
+      description: "Verify chemical tanks are within range; note any abnormal usage.",
+      category: "Inventory",
+      defaultDurationMins: 8,
+      createdBy: "system",
+      createdAt: now,
+    },
+    {
+      id: "sys_close_1",
+      title: "Close: Vac / towel area cleanup",
+      description: "Restock towels/supplies, empty trash, wipe surfaces, quick sweep.",
+      category: "Closing",
+      defaultDurationMins: 20,
+      createdBy: "system",
+      createdAt: now,
+    },
+    {
+      id: "sys_close_2",
+      title: "Close: End-of-day notes",
+      description: "Log issues, customer feedback, equipment warnings, and inventory concerns.",
+      category: "Admin",
+      defaultDurationMins: 10,
+      createdBy: "system",
+      createdAt: now,
+    },
+  ];
+
+  writeJson(TASKS_KEY, seed);
+  return seed;
+}
+
+function getAllTasks(): TaskItem[] {
+  seedSystemTasksIfEmpty();
+  return readJson<TaskItem[]>(TASKS_KEY, []);
+}
+
+function saveAllTasks(tasks: TaskItem[]) {
+  writeJson(TASKS_KEY, tasks);
+}
+
+function safeInt(v: string): number | undefined {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return undefined;
+  const i = Math.floor(n);
+  if (i <= 0) return undefined;
+  return i;
+}
+
+// -----------------------------
+// ASSIGNMENTS (log only; stable)
+// -----------------------------
+type AssignmentBatch = {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  employeeEmail: string;
+  employeePhone?: string;
+
+  taskIds: string[];
+  taskTitles: string[];
+
+  note?: string;
+
+  assignedById: string;
+  assignedByName: string;
+
+  createdAt: string; // ISO
+};
+
+const ASSIGN_LOG_KEY = "twe_assign_log_v1";
+
+function getAssignLog(): AssignmentBatch[] {
+  return readJson<AssignmentBatch[]>(ASSIGN_LOG_KEY, []);
+}
+
+function saveAssignLog(log: AssignmentBatch[]) {
+  writeJson(ASSIGN_LOG_KEY, log);
+}
+
+export function AdminDashboardPage() {
+
+  const smallSelectStyle = {
+    height: "32px",
+    fontSize: "13px",
+    padding: "4px 8px",
+    borderRadius: "6px",
+  };
+
+  
+  const smallCheckboxStyle: React.CSSProperties = {
+    width: 14,
+    height: 14,
+    margin: 0,
+    accentColor: "#4f7cff",
+    cursor: "pointer",
+    flex: "0 0 auto",
+  };
+  void smallCheckboxStyle;
+
+  const compactTaskRowStyle: React.CSSProperties = {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 8,
+    padding: "6px 8px",
+    borderRadius: 10,
+    lineHeight: 1.2,
+  };
+
+  const compactTaskTextStyle: React.CSSProperties = {
+    fontSize: 12,
+    lineHeight: 1.2,
+    marginTop: 1,
+  };
+  void compactTaskTextStyle;
+
+const { user } = useAuth();
+  const navigate = useNavigate();
+
+  if (!user) return <Navigate to="/login" replace />;
+
+  const isAdmin = user.role === "admin";
+  const isManager = user.role === "manager";
+  const isPriv = isAdmin || isManager;
+
+  if (!isPriv) return <Navigate to="/me" replace />;
+
+  const [tab, setTab] = useState<TabKey>("users");
+
+  // USERS
+  const [users, setUsers] = useState<User[]>(() => Storage.getUsers());
+  const refreshUsers = () => setUsers(Storage.getUsers());
+
+  const [phoneEdits, setPhoneEdits] = useState<Record<string, string>>(() => {
+    const map: Record<string, string> = {};
+    for (const u of Storage.getUsers()) map[u.id] = u.phone || "";
+    return map;
+  });
+
+  const [msg, setMsg] = useState<string>("");
+
+  const title = useMemo(() => {
+    if (isAdmin) return "Admin Dashboard";
+    if (isManager) return "Manager Dashboard";
+    return "Dashboard";
+  }, [isAdmin, isManager]);
+
+  const subtitle = useMemo(() => {
+    if (isAdmin) return "Admin: manage users, roles, phones, tasks, and assignments.";
+    if (isManager) return "Manager: employees you created, tasks you created, and assigning.";
+    return "";
+  }, [isAdmin, isManager]);
+
+  const visibleUsers = useMemo(() => {
+    if (isAdmin) return users;
+    return users.filter((u) => u.role === "employee" && (u.createdBy || "") === user.id);
+  }, [isAdmin, users, user.id]);
+
+  const employees = useMemo(() => {
+    // Admin sees all employees; managers only their created employees
+    if (isAdmin) return users.filter((u) => u.role === "employee");
+    return users.filter((u) => u.role === "employee" && (u.createdBy || "") === user.id);
+  }, [isAdmin, users, user.id]);
+
+  const canEditPhoneFor = (u: User) => {
+    if (isAdmin) return true;
+    if (isManager) return u.role === "employee" && (u.createdBy || "") === user.id;
+    return false;
+  };
+
+  const canRemoveUser = (u: User) => {
+    if (u.id === user.id) return false;
+    if (isAdmin) return true;
+    if (isManager) return u.role === "employee" && (u.createdBy || "") === user.id;
+    return false;
+  };
+
+  const canChangeRoleFor = (u: User) => {
+    if (!isAdmin) return false;
+    if (u.id === user.id) return false; // safety
+    return true;
+  };
+
+  const [newUser, setNewUser] = useState<NewUserForm>(() => ({
+    name: "",
+    email: "",
+    phone: "",
+    password: "",
+    role: "employee",
+  }));
+
+  const onCreateUser = () => {
+    setMsg("");
+
+    const name = newUser.name.trim();
+    const email = normalizeEmail(newUser.email);
+    const phone = normalizePhone(newUser.phone);
+    const password = newUser.password;
+
+    if (!name) return setMsg("Name is required.");
+    if (!email) return setMsg("Email is required.");
+    if (!password || password.length < 4) return setMsg("Password must be at least 4 characters.");
+
+    const role: User["role"] = isAdmin ? newUser.role : "employee";
+    if (!isAdmin && role !== "employee") return setMsg("Managers can only create employees.");
+
+    const exists = users.some((u) => normalizeEmail(u.email) === email);
+    if (exists) return setMsg("A user with that email already exists.");
+
+    const nowIso = new Date().toISOString();
+
+    const createdUser: User = {
+      id: `u_${Math.random().toString(16).slice(2)}_${Date.now()}`,
+      name,
+      email,
+      password,
+      role,
+      status: "active" as User["status"],
+      createdAt: nowIso,
+      phone: phone || undefined,
+      createdBy: isAdmin ? undefined : user.id,
+    };
+
+    const next = [createdUser, ...users];
+    Storage.saveUsers(next);
+    setUsers(next);
+
+    setPhoneEdits((prev) => ({ ...prev, [createdUser.id]: createdUser.phone || "" }));
+
+    setNewUser({
+      name: "",
+      email: "",
+      phone: "",
+      password: "",
+      role: "employee",
+    });
+
+    setMsg(`Created ${role}: ${name}`);
+  };
+
+  const savePhoneForUser = (u: User) => {
+    setMsg("");
+
+    if (!canEditPhoneFor(u)) {
+      setMsg("You do not have permission to edit this user's phone.");
+      return;
+    }
+
+    const nextPhone = normalizePhone(phoneEdits[u.id] || "");
+    const nextUsers = users.map((x) => (x.id === u.id ? { ...x, phone: nextPhone || undefined } : x));
+
+    Storage.saveUsers(nextUsers);
+    setUsers(nextUsers);
+
+    setMsg(`Saved phone for ${u.name}`);
+  };
+
+  const setRoleForUser = (u: User, role: User["role"]) => {
+    setMsg("");
+
+    if (!canChangeRoleFor(u)) {
+      setMsg("You do not have permission to change this user's role.");
+      return;
+    }
+
+    const nextUsers = users.map((x) => (x.id === u.id ? { ...x, role } : x));
+    Storage.saveUsers(nextUsers);
+    setUsers(nextUsers);
+
+    setMsg(`Updated role for ${u.name} → ${role}`);
+  };
+
+  const removeUser = (u: User) => {
+    setMsg("");
+
+    if (!canRemoveUser(u)) {
+      setMsg("You do not have permission to remove this user.");
+      return;
+    }
+
+    const label = `${u.name} (${u.email})`;
+    const ok = window.confirm(`Remove this user?\n\n${label}\n\nThis cannot be undone.`);
+    if (!ok) return;
+
+    const nextUsers = users.filter((x) => x.id !== u.id);
+
+    Storage.saveUsers(nextUsers);
+    setUsers(nextUsers);
+
+    setPhoneEdits((prev) => {
+      const copy = { ...prev };
+      delete copy[u.id];
+      return copy;
+    });
+
+    setMsg(`Removed user: ${u.name}`);
+  };
+
+  // -----------------------------
+  // TASKS TAB (real CRUD)
+  // -----------------------------
+  const [tasks, setTasks] = useState<TaskItem[]>(() => getAllTasks());
+  const refreshTasks = () => setTasks(getAllTasks());
+
+  const visibleTasks = useMemo(() => {
+    if (isAdmin) return tasks;
+    // manager sees system + their own tasks
+    return tasks.filter((t) => t.createdBy === "system" || t.createdBy === user.id);
+  }, [isAdmin, tasks, user.id]);
+
+  const [taskMsg, setTaskMsg] = useState<string>("");
+
+  const [taskForm, setTaskForm] = useState<{
+    id?: string;
+    title: string;
+    description: string;
+    category: string;
+    defaultDurationMins: string;
+  }>(() => ({
+    title: "",
+    description: "",
+    category: "",
+    defaultDurationMins: "",
+  }));
+
+  const canDeleteTask = (t: TaskItem) => t.createdBy !== "system";
+
+  const resetTaskForm = () =>
+    setTaskForm({
+      title: "",
+      description: "",
+      category: "",
+      defaultDurationMins: "",
+    });
+
+  const onEditTask = (t: TaskItem) => {
+    setTaskMsg("");
+    setTaskForm({
+      id: t.id,
+      title: t.title,
+      description: t.description || "",
+      category: t.category || "",
+      defaultDurationMins: t.defaultDurationMins ? String(t.defaultDurationMins) : "",
+    });
+  };
+
+  const onSaveTask = () => {
+    setTaskMsg("");
+
+    const title = taskForm.title.trim();
+    const description = taskForm.description.trim();
+    const category = taskForm.category.trim();
+    const dur = safeInt(taskForm.defaultDurationMins);
+
+    if (!title) return setTaskMsg("Task title is required.");
+
+    const nowIso = new Date().toISOString();
+
+    if (taskForm.id) {
+      // UPDATE
+      const next = tasks.map((t) => {
+        if (t.id !== taskForm.id) return t;
+        return {
+          ...t,
+          title,
+          description: description || undefined,
+          category: category || undefined,
+          defaultDurationMins: dur,
+        };
+      });
+
+      saveAllTasks(next);
+      setTasks(next);
+      setTaskMsg("Task updated.");
+      resetTaskForm();
+      return;
+    }
+
+    // CREATE
+    const newTask: TaskItem = {
+      id: `t_${Math.random().toString(16).slice(2)}_${Date.now()}`,
+      title,
+      description: description || undefined,
+      category: category || undefined,
+      defaultDurationMins: dur,
+      createdBy: user.id,
+      createdAt: nowIso,
+    };
+
+    const next = [newTask, ...tasks];
+    saveAllTasks(next);
+    setTasks(next);
+    setTaskMsg("Task created.");
+    resetTaskForm();
+  };
+
+  const onDeleteTask = (t: TaskItem) => {
+    setTaskMsg("");
+
+    if (!canDeleteTask(t)) {
+      setTaskMsg("System tasks cannot be deleted (only edited).");
+      return;
+    }
+
+    // managers can only delete their own tasks (not other people's)
+    if (!isAdmin && t.createdBy !== user.id) {
+      setTaskMsg("You can only delete tasks you created.");
+      return;
+    }
+
+    const ok = window.confirm(`Delete this task?\n\n${t.title}\n\nThis cannot be undone.`);
+    if (!ok) return;
+
+    const next = tasks.filter((x) => x.id !== t.id);
+    saveAllTasks(next);
+    setTasks(next);
+    setTaskMsg("Task deleted.");
+    if (taskForm.id === t.id) resetTaskForm();
+  };
+
+  // -----------------------------
+  // ASSIGN TAB (restored)
+  // -----------------------------
+  const [assignEmployeeId, setAssignEmployeeId] = useState<string>("");
+  const [assignSelectedTaskIds, setAssignSelectedTaskIds] = useState<Record<string, boolean>>({});
+  const [assignNote, setAssignNote] = useState<string>("");
+
+  const [assignMsg, setAssignMsg] = useState<string>("");
+  const [assignLog, setAssignLogState] = useState<AssignmentBatch[]>(() => getAssignLog());
+
+  const refreshAssignLog = () => setAssignLogState(getAssignLog());
+
+  const selectedEmployee = useMemo(() => {
+    if (!assignEmployeeId) return undefined;
+    return employees.find((e) => e.id === assignEmployeeId);
+  }, [assignEmployeeId, employees]);
+
+  const selectedTaskIds = useMemo(() => {
+    return Object.entries(assignSelectedTaskIds)
+      .filter(([, v]) => v)
+      .map(([k]) => k);
+  }, [assignSelectedTaskIds]);
+
+  const selectedTasks = useMemo(() => {
+    const map = new Map<string, TaskItem>();
+    for (const t of visibleTasks) map.set(t.id, t);
+    return selectedTaskIds.map((id) => map.get(id)).filter(Boolean) as TaskItem[];
+  }, [selectedTaskIds, visibleTasks]);
+
+  const toggleTask = (taskId: string) => {
+    setAssignSelectedTaskIds((prev) => ({ ...prev, [taskId]: !prev[taskId] }));
+  };
+
+  const clearAssignForm = () => {
+    setAssignEmployeeId("");
+    setAssignSelectedTaskIds({});
+    setAssignNote("");
+    setAssignMsg("");
+  };
+
+  const sendAssignment = () => {
+    setAssignMsg("");
+
+    if (!selectedEmployee) {
+      setAssignMsg("Pick an employee first.");
+      return;
+    }
+    if (selectedTasks.length === 0) {
+      setAssignMsg("Select at least one task.");
+      return;
+    }
+
+    const batch: AssignmentBatch = {
+      id: `as_${Math.random().toString(16).slice(2)}_${Date.now()}`,
+      employeeId: selectedEmployee.id,
+      employeeName: selectedEmployee.name,
+      employeeEmail: selectedEmployee.email,
+      employeePhone: selectedEmployee.phone,
+
+      taskIds: selectedTasks.map((t) => t.id),
+      taskTitles: selectedTasks.map((t) => t.title),
+
+      note: assignNote.trim() || undefined,
+
+      assignedById: user.id,
+      assignedByName: user.name,
+
+      createdAt: new Date().toISOString(),
+    };
+
+    const nextLog = [batch, ...getAssignLog()].slice(0, 200); // keep last 200 batches
+    saveAssignLog(nextLog);
+    setAssignLogState(nextLog);
+
+    // Keep employee selected (so assigning more is fast), but clear tasks + note.
+    setAssignSelectedTaskIds({});
+    setAssignNote("");
+
+    setAssignMsg(`Sent ${batch.taskIds.length} task(s) to ${batch.employeeName}.`);
+  };
+
+  const removeAssignmentBatch = (batchId: string) => {
+    const ok = window.confirm("Remove this assignment record from the log?");
+    if (!ok) return;
+
+    const next = getAssignLog().filter((b) => b.id !== batchId);
+    saveAssignLog(next);
+    setAssignLogState(next);
+  };
+  return (
+    <div className="container" style={{ paddingTop: 18, paddingBottom: 30 }}>
+      <div className="card" style={{ marginBottom: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <h2 style={{ margin: 0 }}>{title}</h2>
+            <div className="muted" style={{ marginTop: 6, fontSize: 13 }}>
+              {subtitle}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <button className="btn-ghost" onClick={() => navigate("/schedule")}>
+              Schedule
+            </button>
+            <button className="btn-ghost" onClick={() => navigate("/me")}>
+              My Tasks
+            </button>
+            <button className="btn-ghost" onClick={refreshUsers}>
+              Refresh Users
+            </button>
+            <button className="btn-ghost" onClick={refreshTasks}>
+              Refresh Tasks
+            </button>
+            <button className="btn-ghost" onClick={refreshAssignLog}>
+              Refresh Log
+            </button>
+          </div>
+        </div>
+
+        <hr style={{ marginTop: 14, marginBottom: 14 }} />
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button className={tab === "approvals" ? "btn-primary" : "btn-ghost"} onClick={() => setTab("approvals")}>
+            Approvals
+          </button>
+          <button className={tab === "users" ? "btn-primary" : "btn-ghost"} onClick={() => setTab("users")}>
+            Users
+          </button>
+          <button className={tab === "tasks" ? "btn-primary" : "btn-ghost"} onClick={() => setTab("tasks")}>
+            Tasks
+          </button>
+          <button className={tab === "assign" ? "btn-primary" : "btn-ghost"} onClick={() => setTab("assign")}>
+            Assign
+          </button>
+          <button className={tab === "sheets" ? "btn-primary" : "btn-ghost"} onClick={() => setTab("sheets")}>
+            Sheets
+          </button>
+        </div>
+      </div>
+
+      {tab === "users" && (
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}>User management</h3>
+
+          <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+            {isAdmin
+              ? "Admin: change roles in the User column, edit phones, remove users (self-role change blocked for safety)."
+              : "Managers: employees you created only."}
+          </div>
+
+          <div className="card" style={{ marginBottom: 14 }}>
+            <h4 style={{ marginTop: 0, marginBottom: 10 }}>{isAdmin ? "Create User" : "Add Employee"}</h4>
+
+            <div className="row" style={{ gap: 12 }}>
+              <div className="col">
+                <label style={compactTaskRowStyle}>Name</label>
+                <input value={newUser.name} onChange={(e) => setNewUser({ ...newUser, name: e.target.value })} />
+              </div>
+
+              <div className="col">
+                <label style={compactTaskRowStyle}>Email</label>
+                <input value={newUser.email} onChange={(e) => setNewUser({ ...newUser, email: e.target.value })} />
+              </div>
+
+              <div className="col">
+                <label style={compactTaskRowStyle}>Phone (optional)</label>
+                <input
+                  value={newUser.phone}
+                  onChange={(e) => setNewUser({ ...newUser, phone: e.target.value })}
+                  placeholder="(555) 555-5555"
+                  autoComplete="tel"
+                />
+              </div>
+
+              <div className="col">
+                <label style={compactTaskRowStyle}>Password</label>
+                <input
+                  type="password"
+                  value={newUser.password}
+                  onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                />
+              </div>
+
+              {isAdmin && (
+                <div className="col">
+                  <label style={compactTaskRowStyle}>User Type</label>
+                  <select style={smallSelectStyle} value={newUser.role} onChange={(e) => setNewUser({ ...newUser, role: e.target.value as User["role"] })}>
+                    <option value="employee">Employee</option>
+                    <option value="manager">Manager</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+              <button className="btn-primary" onClick={onCreateUser}>
+                {isAdmin ? "Create user" : "Add employee"}
+              </button>
+              <button className="btn-ghost" onClick={() => setNewUser({ name: "", email: "", phone: "", password: "", role: "employee" })}>
+                Clear
+              </button>
+              {msg && (
+                <span className="muted" style={{ alignSelf: "center" }}>
+                  {msg}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th style={{ minWidth: 220 }}>Phone</th>
+                <th>User</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Save</th>
+                <th>Remove</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleUsers.map((u) => {
+                const editablePhone = canEditPhoneFor(u);
+                const removable = canRemoveUser(u);
+                const editableRole = canChangeRoleFor(u);
+
+                return (
+                  <tr key={u.id}>
+                    <td>
+                      <b>{u.name}</b>
+                      {u.id === user.id && (
+                        <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                          (You)
+                        </div>
+                      )}
+                    </td>
+                    <td>{u.email}</td>
+
+                    <td>
+                      <input
+                        value={phoneEdits[u.id] ?? ""}
+                        onChange={(e) => setPhoneEdits((prev) => ({ ...prev, [u.id]: e.target.value }))}
+                        placeholder="(555) 555-5555"
+                        disabled={!editablePhone}
+                        style={{ width: "100%" }}
+                      />
+                    </td>
+
+                    <td>
+                      {isAdmin ? (
+                        <select style={smallSelectStyle} value={u.role} onChange={(e) => setRoleForUser(u, e.target.value as User["role"])} disabled={!editableRole}>
+                          <option value="employee">employee</option>
+                          <option value="manager">manager</option>
+                          <option value="admin">admin</option>
+                        </select>
+                      ) : (
+                        <span>{u.role}</span>
+                      )}
+                    </td>
+
+                    <td>{u.status}</td>
+                    <td>{u.createdAt ? new Date(u.createdAt).toLocaleString() : "—"}</td>
+
+                    <td>
+                      <button className={editablePhone ? "btn-primary" : "btn-ghost"} onClick={() => savePhoneForUser(u)} disabled={!editablePhone}>
+                        Save
+                      </button>
+                    </td>
+
+                    <td>
+                      <button className={removable ? "btn-danger" : "btn-ghost"} onClick={() => removeUser(u)} disabled={!removable}>
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {visibleUsers.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="muted">
+                    {isAdmin ? "No users found." : "No employees found for your manager profile yet."}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {tab === "tasks" && (
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}>Task Database</h3>
+
+          <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+            {isAdmin
+              ? "Admin: see all tasks. System tasks can be edited but not deleted. Custom tasks can be edited/deleted."
+              : "Managers: you see system tasks + tasks you created. You can delete only your own custom tasks."}
+          </div>
+
+          <div className="row" style={{ gap: 14 }}>
+            <div className="col">
+              <div className="card">
+                <h4 style={{ marginTop: 0 }}>{taskForm.id ? "Edit task" : "Add new task"}</h4>
+
+                <label style={compactTaskRowStyle}>Title</label>
+                <input value={taskForm.title} onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })} />
+
+                <label style={compactTaskRowStyle}>Description</label>
+                <textarea value={taskForm.description} onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })} />
+
+                <label style={compactTaskRowStyle}>Category</label>
+                <input
+                  value={taskForm.category}
+                  onChange={(e) => setTaskForm({ ...taskForm, category: e.target.value })}
+                  placeholder="Operations, Inventory, Customer Experience..."
+                />
+
+                <label style={compactTaskRowStyle}>Default duration (minutes)</label>
+                <input
+                  value={taskForm.defaultDurationMins}
+                  onChange={(e) => setTaskForm({ ...taskForm, defaultDurationMins: e.target.value })}
+                  placeholder="e.g., 30"
+                />
+
+                <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+                  <button className="btn-primary" onClick={onSaveTask}>
+                    {taskForm.id ? "Save changes" : "Add task"}
+                  </button>
+                  <button className="btn-ghost" onClick={resetTaskForm}>
+                    Clear
+                  </button>
+
+                  {taskMsg && (
+                    <span className="muted" style={{ alignSelf: "center" }}>
+                      {taskMsg}
+                    </span>
+                  )}
+                </div>
+
+                <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
+                  Tip: Use clear categories (Operations, Customer, Equipment, Inventory) so filters later are easy.
+                </div>
+              </div>
+            </div>
+
+            <div className="col">
+              <div className="card">
+                <h4 style={{ marginTop: 0 }}>Tasks ({visibleTasks.length})</h4>
+
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Task</th>
+                      <th>Category</th>
+                      <th>Created</th>
+                      <th>By</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {
+{visibleTasks.map((t) => {
+  const checked = !!assignSelectedTaskIds[t.id];
+
+  const rowStyle: React.CSSProperties = {
+    display: "flex",
+    gap: 8,
+    alignItems: "flex-start",
+    padding: "6px 8px",
+    borderRadius: 10,
+    marginBottom: 6,
+    border: checked
+      ? "1px solid rgba(90, 200, 250, 0.55)"
+      : "1px solid rgba(255,255,255,0.08)",
+    background: checked
+      ? "rgba(90, 200, 250, 0.10)"
+      : "rgba(255,255,255,0.02)",
+    cursor: "pointer",
+    transition: "all 120ms ease",
+  };
+
+  const checkboxWrap: React.CSSProperties = {
+    width: 18,
+    display: "flex",
+    justifyContent: "center",
+    paddingTop: 2,
+    flex: "0 0 18px",
+  };
+
+  const checkboxStyle: React.CSSProperties = {
+    width: 14,
+    height: 14,
+    margin: 0,
+  };
+
+  const titleStyle: React.CSSProperties = {
+    fontWeight: 800,
+    fontSize: 13,
+    lineHeight: 1.15,
+    margin: 0,
+  };
+
+  const metaRow: React.CSSProperties = {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 6,
+    alignItems: "center",
+    marginTop: 2,
+  };
+
+  const badge: React.CSSProperties = {
+    padding: "1px 6px",
+    borderRadius: 999,
+    fontSize: 11,
+    fontWeight: 700,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.04)",
+    whiteSpace: "nowrap",
+  };
+
+  const helper: React.CSSProperties = {
+    fontSize: 11,
+    opacity: 0.85,
+    whiteSpace: "nowrap",
+  };
+
+  const desc: React.CSSProperties = {
+    fontSize: 12,
+    marginTop: 4,
+    lineHeight: 1.2,
+    display: "-webkit-box",
+    WebkitLineClamp: 2,
+    WebkitBoxOrient: "vertical",
+    overflow: "hidden",
+  };
+
+  return (
+    <div
+      key={t.id}
+      style={rowStyle}
+      role="button"
+      tabIndex={0}
+      onClick={() => toggleTask(t.id)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") toggleTask(t.id);
+      }}
+    >
+      <div style={checkboxWrap}>
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={() => toggleTask(t.id)}
+          onClick={(e) => e.stopPropagation()}
+          style={checkboxStyle}
+        />
+      </div>
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={titleStyle}>{t.title}</div>
+
+        <div style={metaRow}>
+          <span style={badge}>{t.category || "Uncategorized"}</span>
+
+          {typeof t.defaultDurationMins === "number" && (
+            <span style={helper} className="muted">
+              {t.defaultDurationMins} min
+            </span>
+          )}
+
+          <span style={helper} className="muted">
+            {t.createdBy === "system" ? "System" : "Custom"}
+          </span>
+        </div>
+
+        {t.description && (
+          <div className="muted" style={desc}>
+            {t.description}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+})}
+
+
+                    {visibleTasks.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="muted">
+                          No tasks found.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+
+                <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
+                  System tasks are prefilled and can be edited. Only custom tasks can be deleted.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === "assign" && (
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}>Assign Tasks</h3>
+
+          <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+            Pick one employee, select one or more tasks, then Send. This creates an assignment record in the log.
+          </div>
+
+          <div className="row" style={{ gap: 14 }}>
+            <div className="col">
+              <div className="card">
+                <h4 style={{ marginTop: 0 }}>Assignment</h4>
+
+                <label style={compactTaskRowStyle}>Employee</label>
+                <select style={smallSelectStyle}
+                  value={assignEmployeeId}
+                  onChange={(e) => {
+                    setAssignEmployeeId(e.target.value);
+                    setAssignMsg("");
+                  }}
+                >
+                  <option value="">Select employee…</option>
+                  {employees.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.name} ({e.email})
+                    </option>
+                  ))}
+                </select>
+
+                {selectedEmployee && (
+                  <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+                    Phone: {selectedEmployee.phone || "—"}
+                  </div>
+                )}
+
+                <hr style={{ marginTop: 14, marginBottom: 14 }} />
+
+                <label style={compactTaskRowStyle}>Tasks (select multiple)</label>
+                <label style={compactTaskRowStyle}>Tasks (select multiple)</label>
+                <div
+                  className="card"
+                  style={{
+                    padding: 10,
+                    maxHeight: 290,
+                    overflow: "auto",
+                    border: "1px solid rgba(255,255,255,0.10)",
+                  }}
+                >
+                  {visibleTasks.map((t) => {
+                    const checked = !!assignSelectedTaskIds[t.id];
+
+                    const rowStyle: React.CSSProperties = {
+                      display: "flex",
+                      gap: 12,
+                      alignItems: "flex-start",
+                      padding: "10px 10px",
+                      borderRadius: 10,
+                      marginBottom: 8,
+                      border: checked ? "1px solid rgba(90, 200, 250, 0.55)" : "1px solid rgba(255,255,255,0.08)",
+                      background: checked ? "rgba(90, 200, 250, 0.10)" : "rgba(255,255,255,0.02)",
+                      cursor: "pointer",
+                      transition: "all 120ms ease",
+                    };
+
+                    const titleStyle: React.CSSProperties = {
+                      fontWeight: 800,
+                      fontSize: 14,
+                      lineHeight: 1.15,
+                      marginBottom: 4,
+                    };
+
+                    const metaRowStyle: React.CSSProperties = {
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 8,
+                      alignItems: "center",
+                      marginTop: 2,
+                    };
+
+                    const badgeStyle: React.CSSProperties = {
+                      display: "inline-flex",
+                      padding: "2px 8px",
+                      borderRadius: 999,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      border: "1px solid rgba(255,255,255,0.10)",
+                      background: "rgba(255,255,255,0.04)",
+                    };
+
+                    const helperStyle: React.CSSProperties = {
+                      fontSize: 12,
+                      opacity: 0.80,
+                    };
+
+                    return (
+                      <div
+                        key={t.id}
+                        style={rowStyle}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => toggleTask(t.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") toggleTask(t.id);
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleTask(t.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ marginTop: 2 }}
+                        />
+
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={titleStyle}>{t.title}</div>
+
+                          <div style={metaRowStyle}>
+                            {t.category ? <span style={badgeStyle}>{t.category}</span> : <span style={badgeStyle}>Uncategorized</span>}
+                            {typeof t.defaultDurationMins === "number" && (
+                              <span style={helperStyle} className="muted">
+                                Default: {t.defaultDurationMins} min
+                              </span>
+                            )}
+                            <span style={helperStyle} className="muted">
+                              {t.createdBy === "system" ? "System" : "Custom"}
+                            </span>
+                          </div>
+
+                          {t.description && (
+                            <div className="muted" style={{ fontSize: 12, marginTop: 6, lineHeight: 1.25 }}>
+                              {t.description}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {visibleTasks.length === 0 && (
+                    <div className="muted" style={{ fontSize: 13 }}>
+                      No tasks available.
+                    </div>
+                  )}
+                </div>
+
+                <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
+                  Selected tasks: <b>{selectedTasks.length}</b>
+                </div>
+
+                <label style={{ marginTop: 12 }}>Note (optional)</label>
+                <textarea value={assignNote} onChange={(e) => setAssignNote(e.target.value)} placeholder="Add any instructions for the shift…" />
+
+                <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+                  <button className="btn-primary" onClick={sendAssignment}>
+                    Send
+                  </button>
+                  <button className="btn-ghost" onClick={clearAssignForm}>
+                    Clear
+                  </button>
+
+                  {assignMsg && (
+                    <span className="muted" style={{ alignSelf: "center" }}>
+                      {assignMsg}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="col">
+              <div className="card">
+                <h4 style={{ marginTop: 0 }}>Assignment Log</h4>
+                <div className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
+                  Recent assignment sends (stored locally).
+                </div>
+
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>When</th>
+                      <th>Employee</th>
+                      <th>Tasks</th>
+                      <th>By</th>
+                      <th>Remove</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {assignLog.slice(0, 25).map((b) => (
+                      <tr key={b.id}>
+                        <td className="muted">{new Date(b.createdAt).toLocaleString()}</td>
+                        <td>
+                          <b>{b.employeeName}</b>
+                          <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                            {b.employeeEmail}
+                            {b.employeePhone ? ` • ${b.employeePhone}` : ""}
+                          </div>
+                        </td>
+                        <td>
+                          <div style={{ fontWeight: 700 }}>{b.taskTitles.length} task(s)</div>
+                          <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                            {b.taskTitles.slice(0, 3).join(" • ")}
+                            {b.taskTitles.length > 3 ? " • …" : ""}
+                          </div>
+                          {b.note && (
+                            <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                              Note: {b.note}
+                            </div>
+                          )}
+                        </td>
+                        <td className="muted">{b.assignedByName}</td>
+                        <td>
+                          <button className="btn-danger" onClick={() => removeAssignmentBatch(b.id)}>
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+
+                    {assignLog.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="muted">
+                          No assignments yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+
+                <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
+                  This is the foundation. Next we can connect this log to the “My Tasks” page so employees can see their assigned list.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === "approvals" && (
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}>Pending sign-ups</h3>
+          <div className="muted" style={{ fontSize: 13 }}>
+            Approvals will be restored next.
+          </div>
+        </div>
+      )}
+
+      {tab === "sheets" && (
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}>Sheets</h3>
+          <div className="muted" style={{ fontSize: 13 }}>
+            Sheets/export tools will be restored next.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,463 @@
+import { useMemo, useState } from "react";
+import { Storage } from "../../data/storage";
+import type { Assignment, Task, User } from "../../data/types";
+import { useAuth } from "../../state/auth";
+
+function id(prefix: string) {
+  return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now()}`;
+}
+
+export function AdminDashboardPage() {
+  const { user, refresh } = useAuth();
+  const [tab, setTab] = useState<"approvals" | "users" | "tasks" | "assign" | "all">("approvals");
+
+  // read fresh each render (MVP style)
+  const users = Storage.getUsers();
+  const tasks = Storage.getTasks();
+  const assignments = Storage.getAssignments();
+
+  const pending = users.filter((u) => u.status === "pending");
+  const employees = users.filter((u) => u.role === "employee" && u.status === "active");
+
+  const [taskForm, setTaskForm] = useState<{
+    id?: string;
+    title: string;
+    description: string;
+    category: string;
+    defaultDurationMins: string;
+  }>({ title: "", description: "", category: "", defaultDurationMins: "" });
+
+  const [assignForm, setAssignForm] = useState<{
+    employeeId: string;
+    taskId: string;
+    dueDate: string;
+    notes: string;
+  }>({
+    employeeId: employees[0]?.id || "",
+    taskId: tasks[0]?.id || "",
+    dueDate: new Date().toISOString().slice(0, 10),
+    notes: "",
+  });
+
+  const allSheet = useMemo(() => {
+    return employees.map((emp) => {
+      const empAssignments = assignments
+        .filter((a) => a.employeeId === emp.id)
+        .map((a) => ({
+          ...a,
+          task: tasks.find((t) => t.id === a.taskId),
+        }));
+
+      return { emp, empAssignments };
+    });
+  }, [employees.length, tasks.length, assignments.length]);
+
+  if (!user) return null;
+
+  const setUserStatus = (userId: string, status: User["status"]) => {
+    const next = users.map((u) => (u.id === userId ? { ...u, status } : u));
+    Storage.saveUsers(next);
+    refresh();
+  };
+
+  const setUserRole = (userId: string, role: User["role"]) => {
+    const next = users.map((u) => (u.id === userId ? { ...u, role } : u));
+    Storage.saveUsers(next);
+    refresh();
+  };
+
+  const upsertTask = () => {
+    if (!taskForm.title.trim()) return alert("Task title is required.");
+
+    const now = new Date().toISOString();
+    const mins = taskForm.defaultDurationMins ? Number(taskForm.defaultDurationMins) : undefined;
+    if (taskForm.defaultDurationMins && (Number.isNaN(mins) || (mins ?? 0) < 0)) {
+      return alert("Duration must be a valid number.");
+    }
+
+    if (taskForm.id) {
+      const next = tasks.map((t) =>
+        t.id === taskForm.id
+          ? {
+              ...t,
+              title: taskForm.title.trim(),
+              description: taskForm.description.trim() || undefined,
+              category: taskForm.category.trim() || undefined,
+              defaultDurationMins: mins,
+              updatedAt: now,
+            }
+          : t
+      );
+      Storage.saveTasks(next);
+    } else {
+      const newTask: Task = {
+        id: id("t"),
+        title: taskForm.title.trim(),
+        description: taskForm.description.trim() || undefined,
+        category: taskForm.category.trim() || undefined,
+        defaultDurationMins: mins,
+        createdBy: user.id,
+        createdAt: now,
+      };
+      Storage.saveTasks([newTask, ...tasks]);
+    }
+
+    setTaskForm({ title: "", description: "", category: "", defaultDurationMins: "" });
+  };
+
+  const editTask = (t: Task) => {
+    setTaskForm({
+      id: t.id,
+      title: t.title,
+      description: t.description || "",
+      category: t.category || "",
+      defaultDurationMins: t.defaultDurationMins?.toString() || "",
+    });
+    setTab("tasks");
+  };
+
+  const deleteTask = (taskId: string) => {
+    const t = tasks.find((x) => x.id === taskId);
+    if (!t) return;
+
+    if (t.createdBy === "system") {
+      alert("System tasks are locked in this MVP. You can edit them, but not delete them.");
+      return;
+    }
+
+    if (!confirm("Delete this task?")) return;
+
+    Storage.saveTasks(tasks.filter((x) => x.id !== taskId));
+    Storage.saveAssignments(assignments.filter((a) => a.taskId !== taskId));
+  };
+
+  const createAssignment = () => {
+    if (!assignForm.employeeId || !assignForm.taskId) return alert("Pick an employee and a task.");
+
+    const now = new Date().toISOString();
+    const newA: Assignment = {
+      id: id("a"),
+      employeeId: assignForm.employeeId,
+      taskId: assignForm.taskId,
+      dueDate: assignForm.dueDate || undefined,
+      notes: assignForm.notes.trim() || undefined,
+      status: "assigned",
+      createdAt: now,
+    };
+
+    Storage.saveAssignments([newA, ...assignments]);
+    setAssignForm({ ...assignForm, notes: "" });
+  };
+
+  const removeAssignment = (assignmentId: string) => {
+    Storage.saveAssignments(assignments.filter((a) => a.id !== assignmentId));
+  };
+
+  const employeeAssignments = (employeeId: string) =>
+    assignments
+      .filter((a) => a.employeeId === employeeId)
+      .map((a) => ({ ...a, task: tasks.find((t) => t.id === a.taskId) }));
+
+  return (
+    <div className="container">
+      <div className="card">
+        <h2 style={{ marginTop: 0 }}>Admin Dashboard</h2>
+        <small className="muted">
+          Approvals, users, tasks, assigning, and an all-employee one-page sheet.
+        </small>
+
+        <hr />
+
+        <div className="row" style={{ marginBottom: 10 }}>
+          <button className={tab === "approvals" ? "btn-primary" : "btn-ghost"} onClick={() => setTab("approvals")}>Approvals</button>
+          <button className={tab === "users" ? "btn-primary" : "btn-ghost"} onClick={() => setTab("users")}>Users</button>
+          <button className={tab === "tasks" ? "btn-primary" : "btn-ghost"} onClick={() => setTab("tasks")}>Tasks</button>
+          <button className={tab === "assign" ? "btn-primary" : "btn-ghost"} onClick={() => setTab("assign")}>Assign</button>
+          <button className={tab === "all" ? "btn-primary" : "btn-ghost"} onClick={() => setTab("all")}>All Sheets</button>
+        </div>
+
+        {tab === "approvals" && (
+          <div>
+            <h3 style={{ marginTop: 0 }}>Pending sign-ups</h3>
+
+            {pending.length === 0 ? (
+              <p>No pending accounts.</p>
+            ) : (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pending.map((u) => (
+                    <tr key={u.id}>
+                      <td><b>{u.name}</b></td>
+                      <td>{u.email}</td>
+                      <td>{new Date(u.createdAt).toLocaleString()}</td>
+                      <td style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button className="btn-primary" onClick={() => setUserStatus(u.id, "active")}>Approve</button>
+                        <button className="btn-danger" onClick={() => setUserStatus(u.id, "disabled")}>Disable</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+
+        {tab === "users" && (
+          <div>
+            <h3 style={{ marginTop: 0 }}>User management</h3>
+
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th>Admin actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.id}>
+                    <td><b>{u.name}</b></td>
+                    <td>{u.email}</td>
+                    <td>
+                      <select value={u.role} onChange={(e) => setUserRole(u.id, e.target.value as User["role"])}>
+                        <option value="employee">employee</option>
+                        <option value="admin">admin</option>
+                      </select>
+                    </td>
+                    <td>
+                      <select value={u.status} onChange={(e) => setUserStatus(u.id, e.target.value as User["status"])}>
+                        <option value="pending">pending</option>
+                        <option value="active">active</option>
+                        <option value="disabled">disabled</option>
+                      </select>
+                    </td>
+                    <td>
+                      <button
+                        className="btn-ghost"
+                        onClick={() => {
+                          const pwd = prompt("Set a new password for this user (MVP only)");
+                          if (!pwd) return;
+                          const next = users.map((x) => (x.id === u.id ? { ...x, password: pwd } : x));
+                          Storage.saveUsers(next);
+                          alert("Password updated.");
+                        }}
+                      >
+                        Set password
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {tab === "tasks" && (
+          <div className="row">
+            <div className="col">
+              <h3 style={{ marginTop: 0 }}>{taskForm.id ? "Edit task" : "Add a new task"}</h3>
+
+              <label>Title</label>
+              <input value={taskForm.title} onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })} />
+
+              <label>Description</label>
+              <textarea value={taskForm.description} onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })} />
+
+              <label>Category</label>
+              <input value={taskForm.category} onChange={(e) => setTaskForm({ ...taskForm, category: e.target.value })} placeholder="Operations, Inventory, Customer..." />
+
+              <label>Default duration (minutes)</label>
+              <input value={taskForm.defaultDurationMins} onChange={(e) => setTaskForm({ ...taskForm, defaultDurationMins: e.target.value })} placeholder="e.g., 30" />
+
+              <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+                <button className="btn-primary" onClick={upsertTask}>{taskForm.id ? "Save changes" : "Add task"}</button>
+                {taskForm.id && (
+                  <button className="btn-ghost" onClick={() => setTaskForm({ title: "", description: "", category: "", defaultDurationMins: "" })}>
+                    Cancel
+                  </button>
+                )}
+              </div>
+
+              <div style={{ marginTop: 10 }}>
+                <small className="muted">System tasks are prefilled and can be edited. Only custom tasks can be deleted.</small>
+              </div>
+            </div>
+
+            <div className="col">
+              <h3 style={{ marginTop: 0 }}>Task database</h3>
+
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Task</th>
+                    <th>Category</th>
+                    <th>Created by</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tasks.map((t) => (
+                    <tr key={t.id}>
+                      <td>
+                        <b>{t.title}</b>
+                        {t.description && <div><small className="muted">{t.description}</small></div>}
+                      </td>
+                      <td>{t.category || "—"}</td>
+                      <td>{t.createdBy === "system" ? "system" : "admin"}</td>
+                      <td style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button className="btn-ghost" onClick={() => editTask(t)}>Edit</button>
+                        <button className="btn-danger" onClick={() => deleteTask(t.id)}>Delete</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {tab === "assign" && (
+          <div className="row">
+            <div className="col">
+              <h3 style={{ marginTop: 0 }}>Assign a task</h3>
+
+              <label>Employee</label>
+              <select value={assignForm.employeeId} onChange={(e) => setAssignForm({ ...assignForm, employeeId: e.target.value })}>
+                {employees.map((e) => (
+                  <option value={e.id} key={e.id}>
+                    {e.name} ({e.email})
+                  </option>
+                ))}
+              </select>
+
+              <label>Task</label>
+              <select value={assignForm.taskId} onChange={(e) => setAssignForm({ ...assignForm, taskId: e.target.value })}>
+                {tasks.map((t) => (
+                  <option value={t.id} key={t.id}>
+                    {t.title}{t.category ? ` — ${t.category}` : ""}
+                  </option>
+                ))}
+              </select>
+
+              <label>Due date</label>
+              <input type="date" value={assignForm.dueDate} onChange={(e) => setAssignForm({ ...assignForm, dueDate: e.target.value })} />
+
+              <label>Notes</label>
+              <textarea value={assignForm.notes} onChange={(e) => setAssignForm({ ...assignForm, notes: e.target.value })} placeholder="Any special instructions..." />
+
+              <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+                <button className="btn-primary" onClick={createAssignment}>Assign</button>
+                <button className="btn-ghost" onClick={() => setAssignForm({ ...assignForm, notes: "" })}>Clear notes</button>
+              </div>
+            </div>
+
+            <div className="col">
+              <h3 style={{ marginTop: 0 }}>Current assignments</h3>
+
+              {employees.length === 0 ? (
+                <p>No active employees yet.</p>
+              ) : (
+                employees.map((emp) => {
+                  const list = employeeAssignments(emp.id);
+                  return (
+                    <div key={emp.id} style={{ marginBottom: 14 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                        <b>{emp.name}</b>
+                        <small className="muted">{emp.email}</small>
+                      </div>
+
+                      {list.length === 0 ? (
+                        <small className="muted">No tasks.</small>
+                      ) : (
+                        <table className="table" style={{ marginTop: 6 }}>
+                          <thead>
+                            <tr>
+                              <th>Task</th>
+                              <th>Due</th>
+                              <th>Notes</th>
+                              <th></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {list.map((a) => (
+                              <tr key={a.id}>
+                                <td><b>{a.task?.title || "(task missing)"}</b></td>
+                                <td>{a.dueDate || "—"}</td>
+                                <td>{a.notes || "—"}</td>
+                                <td>
+                                  <button className="btn-danger" onClick={() => removeAssignment(a.id)}>Remove</button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
+
+        {tab === "all" && (
+          <div>
+            <h3 style={{ marginTop: 0 }}>All employees — one-page assignment sheet</h3>
+
+            {allSheet.length === 0 ? (
+              <p>No active employees.</p>
+            ) : (
+              allSheet.map(({ emp, empAssignments }) => (
+                <div key={emp.id} style={{ marginBottom: 16 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                    <b>{emp.name}</b>
+                    <small className="muted">{emp.email}</small>
+                  </div>
+
+                  {empAssignments.length === 0 ? (
+                    <div><small className="muted">No tasks assigned.</small></div>
+                  ) : (
+                    <table className="table" style={{ marginTop: 6 }}>
+                      <thead>
+                        <tr>
+                          <th>Task</th>
+                          <th>Due</th>
+                          <th>Notes</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {empAssignments.map((a) => (
+                          <tr key={a.id}>
+                            <td>
+                              <b>{a.task?.title || "(task missing)"}</b>
+                              {a.task?.category && <div><small className="muted">{a.task.category}</small></div>}
+                            </td>
+                            <td>{a.dueDate || "—"}</td>
+                            <td>{a.notes || "—"}</td>
+                            <td>{a.status}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

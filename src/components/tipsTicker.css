@@ -1,0 +1,57 @@
+
+.tw-ticker{
+  width: 100%;
+  background: rgba(10,12,18,0.92);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  backdrop-filter: blur(10px);
+}
+.tw-ticker__container{
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.tw-ticker__pill{
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.tw-ticker__dot{
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #4cc9f0;
+  box-shadow: 0 0 10px rgba(76,201,240,0.55);
+}
+.tw-ticker__viewport{
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.tw-ticker__text{
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 1.25;
+  padding: 2px 0;
+}
+.tw-ticker__center{
+  width: 100%;
+  text-align: center;
+  white-space: normal;
+}
+.tw-ticker__version{
+  color: rgba(255,255,255,0.75);
+  font-weight: 900;
+}

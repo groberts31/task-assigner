@@ -1,0 +1,500 @@
+/* =========================
+   TIDAL WAVE — UI THEME v1
+   (Colorful + Clean + Readable)
+   ========================= */
+
+:root{
+  /* Core colors */
+  --bg0: #070B18;
+  --bg1: #0B1026;
+  --surface: rgba(255,255,255,0.08);
+  --surface-2: rgba(255,255,255,0.10);
+  --border: rgba(255,255,255,0.14);
+  --text: rgba(255,255,255,0.92);
+  --muted: rgba(255,255,255,0.70);
+  --muted2: rgba(255,255,255,0.55);
+
+  /* Accents */
+  --aqua: #2DF3FF;
+  --mint: #2CFFB4;
+  --violet: #A78BFA;
+  --sun: #FFD166;
+  --danger: #FF4D6D;
+
+  /* Shadows */
+  --shadow-lg: 0 18px 60px rgba(0,0,0,0.55);
+  --shadow-md: 0 10px 24px rgba(0,0,0,0.35);
+
+  /* Radius */
+  --r-lg: 18px;
+  --r-md: 14px;
+  --r-sm: 12px;
+
+  /* Typography */
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  color: var(--text);
+  background:
+    radial-gradient(900px 500px at 20% 10%, rgba(45,243,255,0.20), transparent 55%),
+    radial-gradient(800px 500px at 80% 20%, rgba(167,139,250,0.18), transparent 55%),
+    radial-gradient(700px 500px at 55% 90%, rgba(44,255,180,0.14), transparent 60%),
+    linear-gradient(180deg, var(--bg0), var(--bg1));
+}
+
+a { color: inherit; text-decoration: none; }
+a:hover { opacity: 0.92; }
+
+/* ============ Layout ============ */
+.container {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 22px;
+}
+
+.card {
+  background: linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.06));
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 18px;
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(10px);
+}
+
+.row { display: flex; gap: 14px; flex-wrap: wrap; }
+.col { flex: 1 1 340px; }
+
+/* ============ Top Bar ============ */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background:
+    linear-gradient(90deg,
+      rgba(45,243,255,0.18),
+      rgba(167,139,250,0.12),
+      rgba(44,255,180,0.16)
+    ),
+    rgba(10,12,25,0.75);
+  border-bottom: 1px solid rgba(255,255,255,0.12);
+  backdrop-filter: blur(12px);
+}
+
+.nav {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 14px 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 900;
+  letter-spacing: 0.4px;
+}
+
+.brand-badge {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 30% 30%, var(--aqua), var(--violet));
+  box-shadow: 0 0 0 4px rgba(45,243,255,0.10);
+}
+
+.nav-links {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.nav a {
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+}
+.nav a:hover {
+  border-color: rgba(255,255,255,0.16);
+  background: rgba(255,255,255,0.06);
+}
+
+/* ============ Text helpers ============ */
+small.muted, .muted { color: var(--muted); }
+.muted2 { color: var(--muted2); }
+
+h2, h3 {
+  margin: 10px 0;
+  letter-spacing: 0.2px;
+}
+h2 { font-size: 26px; }
+h3 { font-size: 18px; }
+
+/* ============ Form controls ============ */
+label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 12px;
+  margin-bottom: 6px;
+}
+
+input, select, textarea {
+  width: 100%;
+  padding: 11px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.14);
+  outline: none;
+  color: var(--text);
+  background: rgba(0,0,0,0.25);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+}
+
+input::placeholder, textarea::placeholder { color: rgba(255,255,255,0.45); }
+
+input:focus, select:focus, textarea:focus {
+  border-color: rgba(45,243,255,0.42);
+  box-shadow:
+    0 0 0 4px rgba(45,243,255,0.15),
+    inset 0 0 0 1px rgba(255,255,255,0.06);
+}
+
+textarea { min-height: 96px; resize: vertical; }
+
+/* ============ Buttons ============ */
+button {
+  border: 0;
+  border-radius: 14px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  transition: transform 0.06s ease, filter 0.12s ease, box-shadow 0.12s ease;
+}
+button:active { transform: translateY(1px); }
+
+.btn-primary {
+  color: #071018;
+  background: linear-gradient(90deg, var(--aqua), var(--mint));
+  box-shadow: 0 10px 18px rgba(45,243,255,0.14);
+}
+.btn-primary:hover { filter: brightness(1.04); }
+
+.btn-ghost {
+  color: var(--text);
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.14);
+}
+.btn-ghost:hover { background: rgba(255,255,255,0.10); }
+
+.btn-danger {
+  color: #1A0610;
+  background: linear-gradient(90deg, #FF4D6D, #FF7AA2);
+  box-shadow: 0 10px 18px rgba(255,77,109,0.14);
+}
+.btn-danger:hover { filter: brightness(1.03); }
+
+/* ============ Badge ============ */
+.badge {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.08);
+}
+
+/* ============ Tables ============ */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.12);
+}
+
+.table th, .table td {
+  text-align: left;
+  padding: 12px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  vertical-align: top;
+}
+
+.table thead th {
+  font-size: 12px;
+  color: rgba(255,255,255,0.72);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  background: rgba(255,255,255,0.06);
+}
+
+.table tbody tr:hover {
+  background: rgba(255,255,255,0.05);
+}
+
+/* ============ Dividers ============ */
+hr {
+  border: 0;
+  border-top: 1px solid rgba(255,255,255,0.10);
+  margin: 14px 0;
+}
+
+/* ============ Print handling (kept) ============ */
+@media print {
+  .topbar, .no-print { display: none !important; }
+  body { background: #fff !important; color: #111 !important; }
+  .container { max-width: none !important; padding: 0 !important; }
+  .card { box-shadow: none !important; border: 0 !important; background: #fff !important; }
+  .table { border: 1px solid #ccc !important; }
+  .table th, .table td { border-bottom: 1px solid #ccc !important; color: #111 !important; }
+  .print-section { page-break-after: always; break-after: page; }
+  .print-section:last-child { page-break-after: auto; break-after: auto; }
+}
+
+/* =========================
+   EXTRA ROUND UI POLISH
+   ========================= */
+
+/* Cards */
+.card {
+  border-radius: 26px !important;
+}
+
+/* Buttons */
+button,
+.btn-primary,
+.btn-ghost,
+.btn-danger {
+  border-radius: 22px !important;
+}
+
+/* Inputs */
+input,
+select,
+textarea {
+  border-radius: 18px !important;
+}
+
+/* Tables */
+.table {
+  border-radius: 20px !important;
+  overflow: hidden;
+}
+
+/* Badges */
+.badge {
+  border-radius: 999px !important;
+}
+
+/* Nav links */
+.nav a {
+  border-radius: 16px !important;
+}
+
+/* Header bar (print + special) */
+.header-bar {
+  border-radius: 22px !important;
+}
+
+/* Soft section rounding */
+hr {
+  border-radius: 10px;
+}
+
+/* =========================
+   DASHBOARD SCALE UPGRADE
+   ========================= */
+
+/* Wider layout */
+.container {
+  max-width: 1320px !important;
+  padding: 28px !important;
+}
+
+/* Bigger cards */
+.card {
+  padding: 26px !important;
+  border-radius: 30px !important;
+  box-shadow: 0 18px 60px rgba(0,0,0,0.42) !important;
+}
+
+/* Slightly bigger headings */
+h2 { font-size: 30px !important; }
+h3 { font-size: 20px !important; }
+
+/* Space between rows a bit more */
+.row { gap: 18px !important; }
+.col { flex: 1 1 380px !important; }
+
+/* Bigger buttons */
+button {
+  padding: 12px 16px !important;
+  border-radius: 22px !important;
+}
+
+/* Bigger form controls */
+input, select, textarea {
+  padding: 12px 14px !important;
+  border-radius: 18px !important;
+}
+
+/* =========================
+   LOGIN SPLASH LAYOUT
+   ========================= */
+.auth-shell {
+  min-height: calc(100vh - 64px);
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 18px;
+  align-items: stretch;
+}
+
+@media (max-width: 980px) {
+  .auth-shell {
+    grid-template-columns: 1fr;
+  }
+}
+
+.splash-panel {
+  border-radius: 34px;
+  border: 1px solid rgba(255,255,255,0.14);
+  box-shadow: 0 18px 60px rgba(0,0,0,0.40);
+  padding: 34px;
+  overflow: hidden;
+  position: relative;
+
+  background:
+    radial-gradient(900px 420px at 20% 15%, rgba(45,243,255,0.28), transparent 60%),
+    radial-gradient(700px 420px at 85% 25%, rgba(167,139,250,0.22), transparent 60%),
+    radial-gradient(680px 420px at 55% 90%, rgba(44,255,180,0.18), transparent 60%),
+    linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.06));
+  backdrop-filter: blur(12px);
+}
+
+.splash-panel:before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  background:
+    linear-gradient(90deg, rgba(45,243,255,0.25), rgba(167,139,250,0.18), rgba(44,255,180,0.22));
+  opacity: 0.35;
+  filter: blur(20px);
+  z-index: 0;
+}
+
+.splash-content {
+  position: relative;
+  z-index: 1;
+}
+
+.splash-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 950;
+  letter-spacing: 0.6px;
+}
+
+.splash-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 30% 30%, var(--aqua), var(--violet));
+  box-shadow: 0 0 0 6px rgba(45,243,255,0.12);
+}
+
+.splash-title {
+  font-size: 40px;
+  margin: 18px 0 8px;
+  line-height: 1.05;
+}
+
+.splash-subtitle {
+  color: rgba(255,255,255,0.78);
+  font-size: 14px;
+  max-width: 58ch;
+  line-height: 1.5;
+}
+
+.feature-grid {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 980px) {
+  .feature-grid { grid-template-columns: 1fr; }
+}
+
+.feature {
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.18);
+  padding: 14px;
+}
+
+.feature b { display: block; margin-bottom: 4px; }
+.feature small { color: rgba(255,255,255,0.70); line-height: 1.4; }
+
+/* Make the login card feel more “hero” */
+.auth-card {
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.auth-card .card {
+  width: 100%;
+  border-radius: 30px;
+}
+
+/* Button row spacing */
+.auth-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+/* =========================
+   SPLASH WAVE BACKGROUND
+   - subtle SVG waves
+   ========================= */
+
+.splash-panel {
+  position: relative;
+}
+
+/* Wave SVG overlay */
+.splash-panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.55;
+  mix-blend-mode: screen;
+
+  /* SVG is embedded as a data URI so no files needed */
+  background-image: url("data:image/svg+xml,%3Csvg%20width%3D%271200%27%20height%3D%27650%27%20viewBox%3D%270%200%201200%20650%27%20fill%3D%27none%27%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%3E%3Cpath%20d%3D%27M0%20390%20C160%20310%20320%20470%20480%20390%20C640%20310%20800%20470%20960%20390%20C1070%20335%201135%20355%201200%20395%20V650%20H0%20V390Z%27%20fill%3D%27%232DF3FF%27%20fill-opacity%3D%270.12%27/%3E%3Cpath%20d%3D%27M0%20450%20C170%20370%20340%20530%20510%20450%20C680%20370%20850%20530%201020%20450%20C1110%20405%201155%20420%201200%20455%20V650%20H0%20V450Z%27%20fill%3D%27%232CFFB4%27%20fill-opacity%3D%270.10%27/%3E%3Cpath%20d%3D%27M0%20510%20C190%20440%20380%20580%20570%20510%20C760%20440%20950%20580%201140%20510%20C1160%20500%201180%20505%201200%20515%20V650%20H0%20V510Z%27%20fill%3D%27%23A78BFA%27%20fill-opacity%3D%270.08%27/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center bottom;
+
+  /* A soft fade so it doesnt overpower the text */
+  mask-image: radial-gradient(closest-side at 70% 80%, rgba(0,0,0,0.85), rgba(0,0,0,0.25) 65%, rgba(0,0,0,0.0));
+  -webkit-mask-image: radial-gradient(closest-side at 70% 80%, rgba(0,0,0,0.85), rgba(0,0,0,0.25) 65%, rgba(0,0,0,0.0));
+}
+
+/* Slightly stronger brand line */
+.splash-brand {
+  font-size: 14px;
+}
