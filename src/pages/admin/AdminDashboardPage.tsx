@@ -4,6 +4,8 @@ import { useAuth } from "../../state/auth";
 import { Storage } from "../../data/storage";
 import type { Task, User } from "../../data/types";
 type TabKey = "approvals" | "users" | "tasks" | "assign" | "sheets";
+
+const LS_ASSIGNMENTS_KEY = "tw_assignments";
 type AddEmpForm = {
   name: string;
   email: string;
@@ -358,7 +360,79 @@ const title = useMemo(() => (isAdmin ? "Admin Dashboard" : "Manager Dashboard"),
   };
 
   const [sheetsEmployeeId, setSheetsEmployeeId] = useState<string>("__ALL__");
-  const [sheetsMsg, setSheetsMsg] = useState<string>("");
+  
+
+  // ----------------------------
+  // ASSIGN WORKFLOW STATE
+  // ----------------------------
+  const [assignEmployeeId, setAssignEmployeeId] = useState<string>("");
+  const [assignSelected, setAssignSelected] = useState<Record<string, boolean>>({});
+  const [assignMsg, setAssignMsg] = useState<string>("");
+
+  const visibleTasks: any[] = (tasks as any[]) ?? [];
+
+  const toggleTask = (taskId: string) => {
+    setAssignSelected((prev) => ({ ...prev, [taskId]: !prev[taskId] }));
+  };
+
+  const clearSelectedTasks = () => {
+    setAssignSelected({});
+    setAssignMsg("");
+  };
+
+  const handleAssign = () => {
+    try {
+      const selectedTaskIds = Object.keys(assignSelected).filter((id) => assignSelected[id]);
+
+      if (!assignEmployeeId) {
+        setAssignMsg("Please select an employee first.");
+        return;
+      }
+      if (selectedTaskIds.length === 0) {
+        setAssignMsg("Select at least one task to assign.");
+        return;
+      }
+
+      const KEY = "tw_assignments";
+      const existing = JSON.parse(localStorage.getItem(KEY) || "[]");
+
+      const id =
+        (globalThis.crypto && "randomUUID" in globalThis.crypto)
+          ? (globalThis.crypto as any).randomUUID()
+          : String(Date.now());
+
+      const record = {
+        id,
+        employeeId: assignEmployeeId,
+        taskIds: selectedTaskIds,
+        createdAt: new Date().toISOString(),
+        createdBy: (user as any)?.id || "unknown",
+      };
+
+
+
+      // Save to localStorage (always)
+      existing.unshift(record);
+      localStorage.setItem(KEY, JSON.stringify(existing));
+
+      // ALSO save via Storage helper if your app has it (won't error if missing)
+      try {
+        (Storage as any).saveAssignments?.(existing);
+      } catch {}
+
+      // ✅ Clear the form + selections (what you asked for)
+      setAssignSelected({});
+      setAssignEmployeeId("");
+      setAssignMsg(`Assigned ${selectedTaskIds.length} task(s). Refreshing...`);
+
+      // ✅ Refresh page so UI re-reads assignments and selections are gone
+      setTimeout(() => window.location.reload(), 150);
+    } catch (e: any) {
+      setAssignMsg(e?.message || "Failed to assign.");
+    }
+  };
+
+const [sheetsMsg, setSheetsMsg] = useState<string>("");
   const [assignments, setAssignments] = useState<AssignmentRow[]>(() => readAssignments());
 
   const reloadSheets = () => {
@@ -399,6 +473,23 @@ const title = useMemo(() => (isAdmin ? "Admin Dashboard" : "Manager Dashboard"),
     // @ts-ignore
     , users]);
 
+
+
+  // Remove one assignment by id (updates localStorage + state)
+  const removeAssignment = (id: string) => {
+    try {
+      const next = (assignments || []).filter((a: any) => a?.id !== id);
+      localStorage.setItem(LS_ASSIGNMENTS_KEY, JSON.stringify(next));
+      setAssignments(next);
+      try { (setAssignMsg as any)?.("Assignment removed."); } catch {}
+    } catch (e: any) {
+      try { (setAssignMsg as any)?.(e?.message || "Failed to remove assignment."); } catch {}
+    }
+  };
+
+
+  // Lookup employee/user by id (used by Assignments table so we show name instead of id)
+  const employeeById = (id: string) => users.find((u) => u.id === id);
 
 return (
     <div className="container" style={{ paddingTop: 18, paddingBottom: 30 }}>
@@ -772,14 +863,128 @@ return (
           </div>
         </div>
       )}
-      {tab === "assign" && (
-        <div className="card">
-          <h3 style={{ marginTop: 0 }}>Assign tasks</h3>
-          <div className="muted" style={{ fontSize: 13 }}>
-            (Placeholder) Next we’ll restore employee dropdown + compact task checklist + highlight selected + “Assign Selected”.
-          </div>
-        </div>
-      )}
+      
+{tab === "assign" && (
+  <div className="card">
+    <h3 style={{ marginTop: 0 }}>Assign Tasks</h3>
+
+    <label>Employee</label>
+    <select
+      style={{ width: "100%", marginBottom: 12 }}
+      value={assignEmployeeId}
+      onChange={(e) => setAssignEmployeeId(e.target.value)}
+    >
+      <option value="">Select employee…</option>
+      {visibleEmployees.map((e) => (
+        <option key={e.id} value={e.id}>
+          {e.name} ({e.email})
+        </option>
+      ))}
+    </select>
+
+    <div style={{ marginBottom: 12 }}>
+      <strong>Select Tasks</strong>
+
+      <div style={{ marginTop: 8 }}>
+        {visibleTasks.length === 0 ? (
+          <div className="muted">No tasks available.</div>
+        ) : (
+          visibleTasks.map((t: any) => {
+            const checked = !!assignSelected[t.id];
+
+            return (
+              <div
+                key={t.id}
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                  padding: "6px 8px",
+                  marginBottom: 4,
+                  borderRadius: 6,
+                  background: checked ? "rgba(90,200,250,0.12)" : "transparent",
+                  border: checked
+                    ? "1px solid rgba(90,200,250,0.5)"
+                    : "1px solid rgba(255,255,255,0.06)",
+                  cursor: "pointer"
+                }}
+                onClick={() => toggleTask(t.id)}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleTask(t.id)}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ width: 14, height: 14 }}
+                />
+
+                <div style={{ flex: 1, fontSize: 13 }}>
+                  <strong>{t.title}</strong>
+                  {t.category && (
+                    <span className="muted"> • {t.category}</span>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+
+    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+      <button className="btn-primary" onClick={handleAssign}>
+        Assign Selected
+      </button>
+
+                <hr style={{ margin: "14px 0" }} />
+
+                <h4 style={{ marginTop: 0 }}>Assignments (latest)</h4>
+
+                {assignments.length === 0 ? (
+                  <div className="muted" style={{ fontSize: 13 }}>
+                    No assignments yet.
+                  </div>
+                ) : (
+                  <table className="table" style={{ marginTop: 10 }}>
+                    <thead>
+                      <tr>
+                        <th>Employee</th>
+                        <th>Tasks</th>
+                        <th>Created</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {assignments.map((a: any) => (
+                        <tr key={a.id}>
+                          <td className="muted">{(employeeById(a.employeeId)?.name ?? a.employeeId)}</td>
+                          <td>{(a.taskIds || []).length} task(s)</td>
+                          <td className="muted">{a.createdAt ? new Date(a.createdAt).toLocaleString() : "—"}</td>
+                          <td style={{ textAlign: "right" }}>
+                            <button className="btn-danger" onClick={() => removeAssignment(a.id)}>
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+
+
+      <button className="btn-ghost" onClick={clearSelectedTasks}>
+        Clear
+      </button>
+    </div>
+
+    {assignMsg && (
+      <div className="muted" style={{ marginTop: 10 }}>
+        {assignMsg}
+      </div>
+    )}
+  </div>
+)}
+
       
       {tab === "sheets" && (
         <div className="card">
