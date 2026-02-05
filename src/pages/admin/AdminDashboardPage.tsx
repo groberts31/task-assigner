@@ -1,73 +1,25 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../../state/auth";
-import type { User } from "../../data/types";
+import { Storage } from "../../data/storage";
+import type { Task, User } from "../../data/types";
 
 type TabKey = "approvals" | "users" | "tasks" | "assign" | "sheets";
 
-type TaskItem = {
-  id: string;
-  title: string;
-  description?: string;
-  category?: string;
-  defaultDurationMins?: number;
-  createdBy: "system" | "user";
-  createdAt: string;
+type AddEmpForm = {
+  name: string;
+  email: string;
+  phone: string;
+  password: string;
 };
 
-type AssignmentLog = {
-  id: string;
-  createdAt: string;
-  assignedBy: string;     // user.id
-  employeeId: string;     // employee user.id
-  taskIds: string[];
+type UserEdit = {
+  name: string;
+  email: string;
+  phone: string;
+  role: User["role"];
+  status: User["status"];
 };
-
-const LS_TASKS_KEY = "twe_tasks_v1";
-const LS_ASSIGNMENTS_KEY = "twe_assignments_v1";
-const LS_USERS_KEY_GUESS = "twe_users_v1"; // fallback only (your app may use a different key)
-
-function uid(prefix = "id") {
-  return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now()}`;
-}
-
-function safeJsonParse<T>(raw: string | null, fallback: T): T {
-  if (!raw) return fallback;
-  try { return JSON.parse(raw) as T; } catch { return fallback; }
-}
-
-function seedTasks(): TaskItem[] {
-  const now = new Date().toISOString();
-  return [
-    {
-      id: uid("task"),
-      title: "Open checklist + assign stations",
-      description: "Confirm staffing plan, lane coverage, and team assignments for the shift.",
-      category: "Operations",
-      defaultDurationMins: 10,
-      createdBy: "system",
-      createdAt: now,
-    },
-    {
-      id: uid("task"),
-      title: "Inspect tunnel + safety walk",
-      description: "Walk the line, check safety cones/signage, and confirm equipment is clear.",
-      category: "Safety",
-      defaultDurationMins: 15,
-      createdBy: "system",
-      createdAt: now,
-    },
-    {
-      id: uid("task"),
-      title: "Customer greeting focus",
-      description: "Reinforce greeting, upsell script, and conversion goals for the hour.",
-      category: "Sales",
-      defaultDurationMins: 10,
-      createdBy: "system",
-      createdAt: now,
-    },
-  ];
-}
 
 export function AdminDashboardPage() {
   const { user } = useAuth();
@@ -81,279 +33,323 @@ export function AdminDashboardPage() {
 
   if (!isPriv) return <Navigate to="/me" replace />;
 
-  const [tab, setTab] = useState<TabKey>("tasks");
+  const [tab, setTab] = useState<TabKey>("users");
 
-  // ---------------------------
-  // USERS (for employee picker)
-  // ---------------------------
-  const [users, setUsers] = useState<User[]>([]);
+  const title = useMemo(() => (isAdmin ? "Admin Dashboard" : "Manager Dashboard"), [isAdmin]);
+  const subtitle = useMemo(
+    () =>
+      isAdmin
+        ? "Full access. (Approvals/Assign/Sheets will be restored next.)"
+        : "Manager access. (Approvals/Assign/Sheets will be restored next.)",
+    [isAdmin]
+  );
 
-  useEffect(() => {
-    // We try to read from Storage if it exists (runtime),
-    // otherwise fall back to a guessed localStorage key.
-    let loaded: User[] = [];
-
+  // -----------------------------
+  // USERS (restored)
+  // -----------------------------
+  const [users, setUsers] = useState<User[]>(() => {
     try {
-      // @ts-ignore
-      if (typeof Storage !== "undefined" && Storage?.getUsers) {
-        // @ts-ignore
-        loaded = Storage.getUsers();
-      }
+      return Storage.getUsers() as User[];
     } catch {
-      // ignore
+      return [] as User[];
     }
+  });
 
-    if (!loaded || loaded.length === 0) {
-      loaded = safeJsonParse<User[]>(localStorage.getItem(LS_USERS_KEY_GUESS), []);
+  const reloadUsers = () => {
+    try {
+      setUsers(Storage.getUsers() as User[]);
+      setUserMsg("");
+    } catch {
+      setUserMsg("Could not reload users.");
     }
+  };
 
-    setUsers(Array.isArray(loaded) ? loaded : []);
-  }, []);
-
-  const visibleEmployees = useMemo(() => {
-    const allEmps = users.filter((u) => u.role === "employee");
-    if (isAdmin) return allEmps;
-
-    // Manager: if createdBy exists, only show employees created by this manager.
-    // If createdBy isn't used in your app yet, we gracefully fall back to "all employees"
-    // so Assign doesn't look empty.
-    const anyHasCreatedBy = allEmps.some((e: any) => !!e.createdBy);
-    if (!anyHasCreatedBy) return allEmps;
-
-    return allEmps.filter((e: any) => (e.createdBy || "") === user.id);
+  const visibleUsers = useMemo(() => {
+    const all = users || [];
+    if (isAdmin) return all;
+    // Manager can manage only employees they created
+    return all.filter((u) => u.role === "employee" && (u.createdBy || "") === user.id);
   }, [users, isAdmin, user.id]);
 
-  // ---------------------------
-  // TASKS
-  // ---------------------------
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [addEmp, setAddEmp] = useState<AddEmpForm>({ name: "", email: "", phone: "", password: "" });
+  const [userMsg, setUserMsg] = useState<string>("");
+
+  const [userEdits, setUserEdits] = useState<Record<string, UserEdit>>({});
+
+  const getEditForUser = (u: User): UserEdit => {
+    const draft = userEdits[u.id];
+    return {
+      name: (draft?.name ?? u.name) || "",
+      email: (draft?.email ?? u.email) || "",
+      phone: (draft?.phone ?? u.phone ?? "") || "",
+      role: (draft?.role ?? u.role) as User["role"],
+      status: (draft?.status ?? u.status) as User["status"],
+    };
+  };
+
+  const setEditForUser = (userId: string, patch: Partial<UserEdit>) => {
+    setUserEdits((prev) => {
+      const cur = prev[userId] ?? ({
+        name: "",
+        email: "",
+        phone: "",
+        role: "employee",
+        status: "active",
+      } as any);
+      return { ...prev, [userId]: { ...cur, ...patch } };
+    });
+  };
+
+  const canEditRow = (u: User) => {
+    if (isAdmin) return true;
+    // manager can edit only employees they created
+    return u.role === "employee" && (u.createdBy || "") === user.id;
+  };
+
+  const saveUserRow = (u: User) => {
+    setUserMsg("");
+
+    const e = getEditForUser(u);
+    const nextName = e.name.trim();
+    const nextEmail = e.email.trim().toLowerCase();
+    const nextPhone = (e.phone || "").trim();
+
+    if (!nextName) return setUserMsg("Name is required.");
+    if (!nextEmail) return setUserMsg("Email is required.");
+    if (!nextEmail.includes("@")) return setUserMsg("Email looks invalid.");
+
+    // Only admin can change roles
+    const safeRole: User["role"] = isAdmin ? e.role : u.role;
+
+    const next = users.map((x) =>
+      x.id === u.id
+        ? ({
+            ...x,
+            name: nextName,
+            email: nextEmail,
+            phone: nextPhone || undefined,
+            role: safeRole,
+            status: e.status,
+          } as any)
+        : x
+    );
+
+    try {
+      Storage.saveUsers(next);
+      setUsers(next);
+      setUserMsg("User updated.");
+      setUserEdits((prev) => {
+        const copy = { ...prev };
+        delete copy[u.id];
+        return copy;
+      });
+    } catch {
+      setUserMsg("Could not save user.");
+    }
+  };
+
+  const removeUser = (u: User) => {
+    setUserMsg("");
+
+    if (u.id === user.id) {
+      setUserMsg("You cannot remove yourself.");
+      return;
+    }
+
+    if (!isAdmin) {
+      // manager restriction
+      if (!(u.role === "employee" && (u.createdBy || "") === user.id)) {
+        setUserMsg("Managers can only remove employees they created.");
+        return;
+      }
+    }
+
+    const ok = window.confirm(`Remove user "${u.name}"?`);
+    if (!ok) return;
+
+    const next = users.filter((x) => x.id !== u.id);
+
+    try {
+      Storage.saveUsers(next);
+      setUsers(next);
+      setUserMsg("User removed.");
+    } catch {
+      setUserMsg("Could not remove user.");
+    }
+  };
+
+  const addEmployee = () => {
+    setUserMsg("");
+
+    const name = addEmp.name.trim();
+    const email = addEmp.email.trim().toLowerCase();
+    const phone = addEmp.phone.trim();
+    const password = addEmp.password;
+
+    if (!name) return setUserMsg("Employee name is required.");
+    if (!email) return setUserMsg("Employee email is required.");
+    if (!email.includes("@")) return setUserMsg("Employee email looks invalid.");
+    if (!password || password.length < 4) return setUserMsg("Password must be at least 4 characters.");
+
+    const dup = users.some((u) => u.email.trim().toLowerCase() === email);
+    if (dup) return setUserMsg("That email already exists.");
+
+    const now = new Date().toISOString();
+    const id = "u_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+    // createdBy:
+    // - admin-created employees: "system"
+    // - manager-created employees: manager id
+    const createdBy = isAdmin ? "system" : user.id;
+
+    const nextUser: any = {
+      id,
+      name,
+      email,
+      password, // NOTE: local demo only (plain text). We'll harden later.
+      role: "employee",
+      status: "active",
+      phone: phone || undefined,
+      createdBy,
+      createdAt: now,
+    };
+
+    const next = [nextUser, ...users];
+
+    try {
+      Storage.saveUsers(next as any);
+      setUsers(next as any);
+      setAddEmp({ name: "", email: "", phone: "", password: "" });
+      setUserMsg("Employee added.");
+    } catch {
+      setUserMsg("Could not add employee.");
+    }
+  };
+
+  // -----------------------------
+  // TASK DATABASE (kept restored)
+  // -----------------------------
+  const [tasks, setTasks] = useState<Task[]>(() => {
+    try {
+      return Storage.getTasks() as Task[];
+    } catch {
+      return [] as Task[];
+    }
+  });
+
   const [taskMsg, setTaskMsg] = useState<string>("");
 
   const [taskForm, setTaskForm] = useState<{
-    id: string | null;
+    id?: string;
     title: string;
     description: string;
     category: string;
     defaultDurationMins: string;
   }>({
-    id: null,
+    id: undefined,
     title: "",
     description: "",
     category: "",
     defaultDurationMins: "",
   });
 
-  useEffect(() => {
-    const loaded = safeJsonParse<TaskItem[]>(localStorage.getItem(LS_TASKS_KEY), []);
-    if (loaded && loaded.length > 0) setTasks(loaded);
-    else {
-      const seeded = seedTasks();
-      setTasks(seeded);
-      localStorage.setItem(LS_TASKS_KEY, JSON.stringify(seeded));
+  const reloadTasks = () => {
+    try {
+      const next = Storage.getTasks() as Task[];
+      setTasks(next);
+      setTaskMsg("");
+    } catch {
+      setTaskMsg("Could not reload tasks.");
     }
-  }, []);
-
-  useEffect(() => {
-    // persist tasks
-    localStorage.setItem(LS_TASKS_KEY, JSON.stringify(tasks));
-  }, [tasks]);
-
-  const resetTaskForm = () => {
-    setTaskForm({ id: null, title: "", description: "", category: "", defaultDurationMins: "" });
   };
 
-  const saveTask = () => {
+  const resetTaskForm = () => {
+    setTaskForm({ id: undefined, title: "", description: "", category: "", defaultDurationMins: "" });
+  };
+
+  const editTask = (t: any) => {
     setTaskMsg("");
+    setTaskForm({
+      id: t.id,
+      title: String(t.title || ""),
+      description: String(t.description || ""),
+      category: String(t.category || ""),
+      defaultDurationMins: typeof t.defaultDurationMins === "number" ? String(t.defaultDurationMins) : "",
+    });
+  };
+
+  const upsertTask = () => {
+    setTaskMsg("");
+
     const title = taskForm.title.trim();
     if (!title) {
-      setTaskMsg("Task title is required.");
+      setTaskMsg("Title is required.");
       return;
     }
 
     const minsRaw = taskForm.defaultDurationMins.trim();
     const mins = minsRaw ? Number(minsRaw) : undefined;
-    const minsOk = minsRaw
-      ? typeof mins === "number" && Number.isFinite(mins) && mins >= 0
-      : true;
+    const minsOk = minsRaw ? Number.isFinite(mins) && (mins as number) >= 0 : true;
+
     if (!minsOk) {
-      setTaskMsg("Default duration must be a number (minutes).");
+      setTaskMsg("Duration must be a number (0 or higher).");
       return;
     }
 
-    const payload: Omit<TaskItem, "id"> & { id?: string } = {
+    const now = new Date().toISOString();
+    const id = taskForm.id || ("t_" + Math.random().toString(36).slice(2) + Date.now().toString(36));
+
+    const existing: any = (tasks as any[]).find((x) => x.id === id);
+    const createdBy = existing?.createdBy ?? (user.role === "admin" ? "system" : user.id);
+
+    const nextTask: any = {
+      ...(existing || {}),
+      id,
       title,
-      description: taskForm.description.trim() || undefined,
-      category: taskForm.category.trim() || undefined,
-      defaultDurationMins: typeof mins === "number" ? mins : undefined,
-      createdBy: "user",
-      createdAt: new Date().toISOString(),
+      description: taskForm.description.trim(),
+      category: taskForm.category.trim(),
+      defaultDurationMins: minsRaw ? mins : undefined,
+      createdBy,
+      updatedAt: now,
+      createdAt: existing?.createdAt ?? now,
     };
 
-    if (taskForm.id) {
-      setTasks((prev) =>
-        prev.map((t) => (t.id === taskForm.id ? { ...t, ...payload, id: t.id } : t))
-      );
-      setTaskMsg("Task updated.");
-    } else {
-      const next: TaskItem = { id: uid("task"), ...payload };
-      setTasks((prev) => [next, ...prev]);
-      setTaskMsg("Task added.");
+    const next = (tasks as any[]).some((x) => x.id === id)
+      ? (tasks as any[]).map((x) => (x.id === id ? nextTask : x))
+      : [nextTask, ...(tasks as any[])];
+
+    try {
+      Storage.saveTasks(next as any);
+      setTasks(next as any);
+      setTaskMsg(taskForm.id ? "Task updated." : "Task added.");
+      resetTaskForm();
+    } catch {
+      setTaskMsg("Could not save tasks.");
     }
-
-    resetTaskForm();
-    // Small auto-clear so it doesn't hang around forever
-    setTimeout(() => setTaskMsg(""), 1800);
   };
 
-  const editTask = (t: TaskItem) => {
+  const removeTask = (id: string) => {
     setTaskMsg("");
-    setTaskForm({
-      id: t.id,
-      title: t.title || "",
-      description: t.description || "",
-      category: t.category || "",
-      defaultDurationMins: typeof t.defaultDurationMins === "number" ? String(t.defaultDurationMins) : "",
-    });
-  };
 
-  const deleteTask = (id: string) => {
-    setTaskMsg("");
-    setTasks((prev) => prev.filter((t) => t.id !== id));
-    if (taskForm.id === id) resetTaskForm();
-    setTaskMsg("Task removed.");
-    setTimeout(() => setTaskMsg(""), 1800);
-  };
+    const t: any = (tasks as any[]).find((x) => x.id === id);
+    if (!t) return;
 
-  // ---------------------------
-  // ASSIGN
-  // ---------------------------
-  const [assignEmployeeId, setAssignEmployeeId] = useState<string>("");
-  const [assignSelected, setAssignSelected] = useState<Record<string, boolean>>({});
-  const [assignMsg, setAssignMsg] = useState<string>("");
-
-  const [assignments, setAssignments] = useState<AssignmentLog[]>(() =>
-    safeJsonParse<AssignmentLog[]>(localStorage.getItem(LS_ASSIGNMENTS_KEY), [])
-  );
-
-  useEffect(() => {
-    localStorage.setItem(LS_ASSIGNMENTS_KEY, JSON.stringify(assignments));
-  }, [assignments]);
-
-  useEffect(() => {
-    // preselect first employee if none selected
-    if (!assignEmployeeId && visibleEmployees.length > 0) {
-      setAssignEmployeeId(visibleEmployees[0].id);
-    }
-  }, [assignEmployeeId, visibleEmployees]);
-
-  const visibleTasks = useMemo(() => {
-    // You can add filtering later; for now show all tasks.
-    return tasks;
-  }, [tasks]);
-
-  const toggleTask = (id: string) => {
-    setAssignSelected((prev) => ({ ...prev, [id]: !prev[id] }));
-  };
-
-  const clearSelectedTasks = () => setAssignSelected({});
-
-  const handleAssign = () => {
-    setAssignMsg("");
-    if (!assignEmployeeId) {
-      setAssignMsg("Pick an employee first.");
+    if (t.createdBy === "system") {
+      setTaskMsg("System tasks cannot be deleted.");
       return;
     }
 
-    const taskIds = Object.entries(assignSelected)
-      .filter(([, on]) => !!on)
-      .map(([id]) => id);
+    const next = (tasks as any[]).filter((x) => x.id !== id);
 
-    if (taskIds.length === 0) {
-      setAssignMsg("Select at least one task.");
-      return;
+    try {
+      Storage.saveTasks(next as any);
+      setTasks(next as any);
+      setTaskMsg("Task removed.");
+      if (taskForm.id === id) resetTaskForm();
+    } catch {
+      setTaskMsg("Could not remove task.");
     }
-
-    const entry: AssignmentLog = {
-      id: uid("asgn"),
-      createdAt: new Date().toISOString(),
-      assignedBy: user.id,
-      employeeId: assignEmployeeId,
-      taskIds,
-    };
-
-    setAssignments((prev) => [entry, ...prev]);
-    clearSelectedTasks();
-    setAssignMsg("Assigned!");
-    setTimeout(() => setAssignMsg(""), 1800);
   };
-
-  const removeAssignment = (id: string) => {
-    setAssignments((prev) => prev.filter((a) => a.id !== id));
-  };
-
-  const employeeById = (id: string) => users.find((u) => u.id === id);
-  const taskById = (id: string) => tasks.find((t) => t.id === id);
-
-  // Compact card styles (so the checkbox containers aren't huge)
-  const compactRow: React.CSSProperties = {
-    display: "flex",
-    gap: 10,
-    alignItems: "flex-start",
-    padding: "8px 10px",
-    borderRadius: 10,
-    marginBottom: 8,
-    border: "1px solid rgba(255,255,255,0.08)",
-    background: "rgba(255,255,255,0.02)",
-    cursor: "pointer",
-    transition: "all 120ms ease",
-  };
-  const compactRowCheckedBorder = "1px solid rgba(90, 200, 250, 0.55)";
-  const compactRowCheckedBg = "rgba(90, 200, 250, 0.10)";
-
-  const smallCheckbox: React.CSSProperties = {
-    width: 14,
-    height: 14,
-    marginTop: 2,
-    flex: "0 0 auto",
-  };
-
-  const compactTitle: React.CSSProperties = {
-    fontWeight: 800,
-    fontSize: 13,
-    lineHeight: 1.1,
-    marginBottom: 3,
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-  };
-
-  const compactMetaRow: React.CSSProperties = {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: 6,
-    alignItems: "center",
-    marginTop: 2,
-  };
-
-  const compactBadge: React.CSSProperties = {
-    display: "inline-flex",
-    padding: "1px 7px",
-    borderRadius: 999,
-    fontSize: 11,
-    fontWeight: 700,
-    border: "1px solid rgba(255,255,255,0.10)",
-    background: "rgba(255,255,255,0.04)",
-  };
-
-  const compactHelper: React.CSSProperties = {
-    fontSize: 11,
-    opacity: 0.80,
-  };
-
-  // ---------------------------
-  // UI
-  // ---------------------------
-  const title = useMemo(() => (isAdmin ? "Admin Dashboard" : "Manager Dashboard"), [isAdmin]);
 
   return (
     <div className="container" style={{ paddingTop: 18, paddingBottom: 30 }}>
@@ -362,13 +358,17 @@ export function AdminDashboardPage() {
           <div>
             <h2 style={{ margin: 0 }}>{title}</h2>
             <div className="muted" style={{ marginTop: 6, fontSize: 13 }}>
-              Tasks + Assign restored. (Approvals/Users/Sheets can be restored next.)
+              {subtitle}
             </div>
           </div>
 
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <button className="btn-ghost" onClick={() => navigate("/schedule")}>Schedule</button>
-            <button className="btn-ghost" onClick={() => navigate("/me")}>My Tasks</button>
+            <button className="btn-ghost" onClick={() => navigate("/schedule")}>
+              Schedule
+            </button>
+            <button className="btn-ghost" onClick={() => navigate("/me")}>
+              My Tasks
+            </button>
           </div>
         </div>
 
@@ -396,248 +396,324 @@ export function AdminDashboardPage() {
       {tab === "approvals" && (
         <div className="card">
           <h3 style={{ marginTop: 0 }}>Pending sign-ups</h3>
-          <div className="muted" style={{ fontSize: 13 }}>(Next) Restore approvals table + approve/deny.</div>
+          <div className="muted" style={{ fontSize: 13 }}>
+            (Placeholder) We’ll restore approvals table + approve/deny actions next.
+          </div>
         </div>
       )}
 
       {tab === "users" && (
         <div className="card">
           <h3 style={{ marginTop: 0 }}>User management</h3>
-          <div className="muted" style={{ fontSize: 13 }}>(Next) Restore users table + phone edit + role change + remove.</div>
+
+          <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+            Admin: manage all users. Manager: manage employees you created. Phone can be added/edited for any user you can manage.
+          </div>
+
+          {/* Add Employee */}
+          <div className="card" style={{ marginBottom: 14 }}>
+            <h4 style={{ marginTop: 0, marginBottom: 8 }}>Add Employee</h4>
+            <div className="row" style={{ gap: 12 }}>
+              <div className="col">
+                <label>Name</label>
+                <input value={addEmp.name} onChange={(e) => setAddEmp({ ...addEmp, name: e.target.value })} />
+              </div>
+              <div className="col">
+                <label>Email</label>
+                <input value={addEmp.email} onChange={(e) => setAddEmp({ ...addEmp, email: e.target.value })} />
+              </div>
+            </div>
+
+            <div className="row" style={{ gap: 12, marginTop: 10 }}>
+              <div className="col">
+                <label>Phone (optional)</label>
+                <input
+                  value={addEmp.phone}
+                  onChange={(e) => setAddEmp({ ...addEmp, phone: e.target.value })}
+                  placeholder="(555) 555-5555"
+                />
+              </div>
+              <div className="col">
+                <label>Password</label>
+                <input
+                  type="password"
+                  value={addEmp.password}
+                  onChange={(e) => setAddEmp({ ...addEmp, password: e.target.value })}
+                  placeholder="Temporary password"
+                />
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+              <button className="btn-primary" onClick={addEmployee}>
+                Add Employee
+              </button>
+              <button className="btn-ghost" onClick={() => setAddEmp({ name: "", email: "", phone: "", password: "" })}>
+                Clear
+              </button>
+              <button className="btn-ghost" onClick={reloadUsers}>
+                Reload
+              </button>
+            </div>
+
+            {userMsg && (
+              <div className="muted" style={{ marginTop: 10, fontSize: 13 }}>
+                {userMsg}
+              </div>
+            )}
+          </div>
+
+          {/* Users table */}
+          <table className="table">
+            <thead>
+              <tr>
+                <th style={{ width: 220 }}>Name</th>
+                <th style={{ width: 240 }}>Email</th>
+                <th style={{ width: 180 }}>Phone</th>
+                <th style={{ width: 120 }}>User</th>
+                <th style={{ width: 120 }}>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleUsers.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="muted">
+                    No users visible.
+                  </td>
+                </tr>
+              ) : (
+                visibleUsers.map((u) => {
+                  const e = getEditForUser(u);
+                  const editable = canEditRow(u);
+
+                  const dirty =
+                    e.name !== u.name ||
+                    e.email !== u.email ||
+                    (e.phone || "") !== (u.phone || "") ||
+                    (isAdmin ? e.role !== u.role : false) ||
+                    e.status !== u.status;
+
+                  return (
+                    <tr key={u.id}>
+                      <td>
+                        <input
+                          value={e.name}
+                          onChange={(ev) => setEditForUser(u.id, { name: ev.target.value })}
+                          disabled={!editable}
+                          style={{ width: "100%" }}
+                        />
+                      </td>
+
+                      <td>
+                        <input
+                          value={e.email}
+                          onChange={(ev) => setEditForUser(u.id, { email: ev.target.value })}
+                          disabled={!editable}
+                          style={{ width: "100%" }}
+                        />
+                      </td>
+
+                      <td>
+                        <input
+                          value={e.phone}
+                          onChange={(ev) => setEditForUser(u.id, { phone: ev.target.value })}
+                          disabled={!editable}
+                          placeholder="(555) 555-5555"
+                          style={{ width: "100%" }}
+                        />
+                      </td>
+
+                      <td>
+                        <select
+                          value={isAdmin ? e.role : "employee"}
+                          onChange={(ev) => setEditForUser(u.id, { role: ev.target.value as User["role"] })}
+                          disabled={!isAdmin}
+                        >
+                          <option value="employee">employee</option>
+                          <option value="manager">manager</option>
+                          <option value="admin">admin</option>
+                        </select>
+                      </td>
+
+                      <td>
+                        <select
+                          value={e.status}
+                          onChange={(ev) => setEditForUser(u.id, { status: ev.target.value as any })}
+                          disabled={!editable}
+                        >
+                          <option value="active">active</option>
+                          <option value="pending">pending</option>
+                          <option value="disabled">disabled</option>
+                        </select>
+                      </td>
+
+                      <td style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button className="btn-primary" disabled={!editable || !dirty} onClick={() => saveUserRow(u)}>
+                          Save
+                        </button>
+
+                        <button
+                          className="btn-ghost"
+                          disabled={!editable}
+                          onClick={() => {
+                            setUserEdits((prev) => {
+                              const copy = { ...prev };
+                              delete copy[u.id];
+                              return copy;
+                            });
+                          }}
+                        >
+                          Reset
+                        </button>
+
+                        <button className="btn-danger" disabled={!editable} onClick={() => removeUser(u)}>
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+
+          {!isAdmin && (
+            <div className="muted" style={{ marginTop: 10, fontSize: 13 }}>
+              Managers only see employees they created.
+            </div>
+          )}
         </div>
       )}
 
       {tab === "tasks" && (
         <div className="card">
-          <h3 style={{ marginTop: 0 }}>{taskForm.id ? "Edit task" : "Add a new task"}</h3>
-
-          <label>Title</label>
-          <input value={taskForm.title} onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })} />
-
-          <label>Description</label>
-          <textarea value={taskForm.description} onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })} />
-
-          <label>Category</label>
-          <input
-            value={taskForm.category}
-            onChange={(e) => setTaskForm({ ...taskForm, category: e.target.value })}
-            placeholder="Operations, Inventory, Customer..."
-          />
-
-          <label>Default duration (minutes)</label>
-          <input
-            value={taskForm.defaultDurationMins}
-            onChange={(e) => setTaskForm({ ...taskForm, defaultDurationMins: e.target.value })}
-            placeholder="e.g., 30"
-          />
-
-          <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
-            <button className="btn-primary" onClick={saveTask}>
-              {taskForm.id ? "Save changes" : "Add task"}
-            </button>
-            <button className="btn-ghost" onClick={resetTaskForm}>
-              Clear
-            </button>
-          </div>
-
-          {taskMsg && (
-            <div className="muted" style={{ marginTop: 10, fontSize: 13 }}>
-              {taskMsg}
-            </div>
-          )}
-
-          <hr style={{ marginTop: 16, marginBottom: 12 }} />
-
           <h3 style={{ marginTop: 0 }}>Task database</h3>
 
-          {tasks.length === 0 ? (
-            <div className="muted">No tasks yet.</div>
-          ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Task</th>
-                  <th>Category</th>
-                  <th>Duration</th>
-                  <th>Type</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tasks.map((t) => (
-                  <tr key={t.id}>
-                    <td style={{ maxWidth: 520 }}>
-                      <b>{t.title}</b>
-                      {t.description && (
-                        <div>
-                          <small className="muted">{t.description}</small>
-                        </div>
-                      )}
-                    </td>
-                    <td>{t.category || "—"}</td>
-                    <td>{typeof t.defaultDurationMins === "number" ? `${t.defaultDurationMins}m` : "—"}</td>
-                    <td className="muted">{t.createdBy === "system" ? "System" : "Custom"}</td>
-                    <td style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <button className="btn-ghost" onClick={() => editTask(t)}>Edit</button>
-                      <button className="btn-danger" onClick={() => deleteTask(t.id)}>Remove</button>
-                    </td>
+          <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+            Add/edit tasks here. “System” tasks can be edited but not deleted. Custom tasks can be deleted.
+          </div>
+
+          <div className="row" style={{ gap: 14 }}>
+            <div className="col">
+              <h4 style={{ marginTop: 0 }}>{taskForm.id ? "Edit task" : "Add task"}</h4>
+
+              <label>Title</label>
+              <input value={taskForm.title} onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })} />
+
+              <label>Description</label>
+              <textarea
+                value={taskForm.description}
+                onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })}
+              />
+
+              <label>Category</label>
+              <input
+                value={taskForm.category}
+                onChange={(e) => setTaskForm({ ...taskForm, category: e.target.value })}
+                placeholder="Operations, Inventory, Customer..."
+              />
+
+              <label>Default duration (minutes)</label>
+              <input
+                value={taskForm.defaultDurationMins}
+                onChange={(e) => setTaskForm({ ...taskForm, defaultDurationMins: e.target.value })}
+                placeholder="e.g., 30"
+                inputMode="numeric"
+              />
+
+              <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+                <button className="btn-primary" onClick={upsertTask}>
+                  {taskForm.id ? "Save Changes" : "Add Task"}
+                </button>
+
+                <button className="btn-ghost" onClick={resetTaskForm}>
+                  Clear
+                </button>
+
+                <button className="btn-ghost" onClick={reloadTasks}>
+                  Reload
+                </button>
+              </div>
+
+              {taskMsg && (
+                <div className="muted" style={{ marginTop: 10, fontSize: 13 }}>
+                  {taskMsg}
+                </div>
+              )}
+            </div>
+
+            <div className="col">
+              <h4 style={{ marginTop: 0 }}>Tasks</h4>
+
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Task</th>
+                    <th>Category</th>
+                    <th>Type</th>
+                    <th>Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+                </thead>
+                <tbody>
+                  {(tasks as any[]).length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="muted">
+                        No tasks yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    (tasks as any[]).map((t) => (
+                      <tr key={t.id}>
+                        <td style={{ maxWidth: 420 }}>
+                          <b>{t.title}</b>
+                          {t.description ? (
+                            <div className="muted" style={{ fontSize: 12, marginTop: 4, lineHeight: 1.25 }}>
+                              {t.description}
+                            </div>
+                          ) : null}
+                          {typeof t.defaultDurationMins === "number" ? (
+                            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                              Default: {t.defaultDurationMins} min
+                            </div>
+                          ) : null}
+                        </td>
+                        <td>{t.category || "—"}</td>
+                        <td>{t.createdBy === "system" ? "System" : "Custom"}</td>
+                        <td style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button className="btn-ghost" onClick={() => editTask(t)}>
+                            Edit
+                          </button>
+                          <button
+                            className="btn-danger"
+                            onClick={() => removeTask(t.id)}
+                            disabled={t.createdBy === "system"}
+                            title={t.createdBy === "system" ? "System tasks cannot be deleted" : "Delete task"}
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+
+              {!isAdmin && (
+                <div className="muted" style={{ marginTop: 10, fontSize: 13 }}>
+                  Managers can manage the task database, but assignment will still be limited to employees you created.
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
       {tab === "assign" && (
-        <div className="row">
-          <div className="col">
-            <div className="card">
-              <h3 style={{ marginTop: 0 }}>Assign tasks</h3>
-
-              <label>Employee</label>
-              <select value={assignEmployeeId} onChange={(e) => setAssignEmployeeId(e.target.value)}>
-                {visibleEmployees.map((e) => (
-                  <option value={e.id} key={e.id}>
-                    {e.name} ({e.email})
-                  </option>
-                ))}
-              </select>
-
-              <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
-                <button className="btn-primary" onClick={handleAssign}>
-                  Assign Selected
-                </button>
-                <button className="btn-ghost" onClick={clearSelectedTasks}>
-                  Clear Selection
-                </button>
-              </div>
-
-              {assignMsg && (
-                <div className="muted" style={{ marginTop: 10, fontSize: 13 }}>
-                  {assignMsg}
-                </div>
-              )}
-
-              <hr style={{ marginTop: 16, marginBottom: 12 }} />
-
-              <div className="muted" style={{ fontSize: 13, padding: "6px 0" }}>
-                Select tasks (click row to toggle). Selected rows highlight.
-              </div>
-
-              {visibleTasks.length === 0 ? (
-                <div className="muted">No tasks found. Add tasks in the Tasks tab first.</div>
-              ) : (
-                <div>
-                  {visibleTasks.map((t) => {
-                    const checked = !!assignSelected[t.id];
-                    const rowStyle: React.CSSProperties = {
-                      ...compactRow,
-                      border: checked ? compactRowCheckedBorder : compactRow.border,
-                      background: checked ? compactRowCheckedBg : compactRow.background,
-                    };
-
-                    return (
-                      <div
-                        key={t.id}
-                        style={rowStyle}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => toggleTask(t.id)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") toggleTask(t.id);
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleTask(t.id)}
-                          onClick={(e) => e.stopPropagation()}
-                          style={smallCheckbox}
-                        />
-
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={compactTitle} title={t.title}>
-                            {t.title}
-                          </div>
-
-                          <div style={compactMetaRow}>
-                            <span style={compactBadge}>{t.category || "Uncategorized"}</span>
-
-                            {typeof t.defaultDurationMins === "number" && (
-                              <span className="muted" style={compactHelper}>
-                                {t.defaultDurationMins} min
-                              </span>
-                            )}
-
-                            <span className="muted" style={compactHelper}>
-                              {t.createdBy === "system" ? "System" : "Custom"}
-                            </span>
-                          </div>
-
-                          {t.description && (
-                            <div className="muted" style={{ fontSize: 11, marginTop: 6, lineHeight: 1.2 }}>
-                              {t.description}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="col">
-            <div className="card">
-              <h3 style={{ marginTop: 0 }}>Assignment log</h3>
-              <div className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
-                Stored locally (key: {LS_ASSIGNMENTS_KEY}). You can remove entries to test the remove flow.
-              </div>
-
-              {assignments.length === 0 ? (
-                <div className="muted">No assignments yet.</div>
-              ) : (
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>When</th>
-                      <th>Employee</th>
-                      <th>Tasks</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {assignments.map((a) => {
-                      const emp = employeeById(a.employeeId);
-                      const taskTitles = a.taskIds
-                        .map((id) => taskById(id)?.title || "Unknown task")
-                        .filter(Boolean);
-
-                      return (
-                        <tr key={a.id}>
-                          <td className="muted">{new Date(a.createdAt).toLocaleString()}</td>
-                          <td>{emp ? emp.name : a.employeeId}</td>
-                          <td style={{ maxWidth: 520 }}>
-                            {taskTitles.map((t: string, idx: number) => (
-                              <div key={idx}>
-                                <small>{t}</small>
-                              </div>
-                            ))}
-                          </td>
-                          <td>
-                            <button className="btn-danger" onClick={() => removeAssignment(a.id)}>
-                              Remove
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-            </div>
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}>Assign tasks</h3>
+          <div className="muted" style={{ fontSize: 13 }}>
+            (Placeholder) Next we’ll restore employee dropdown + compact task checklist + highlight selected + “Assign Selected”.
           </div>
         </div>
       )}
@@ -645,7 +721,9 @@ export function AdminDashboardPage() {
       {tab === "sheets" && (
         <div className="card">
           <h3 style={{ marginTop: 0 }}>Sheets</h3>
-          <div className="muted" style={{ fontSize: 13 }}>(Next) Restore employee sheets export.</div>
+          <div className="muted" style={{ fontSize: 13 }}>
+            (Placeholder) Next we’ll restore per-employee sheets + all-users export.
+          </div>
         </div>
       )}
     </div>

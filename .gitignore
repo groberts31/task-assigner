@@ -3,3 +3,9 @@ dist
 .env
 .DS_Store
 .vite
+
+# --- local backup files made during debugging ---
+*.BAK*
+*.BROKEN*
+*.PRE_*
+*.RECOVERED*
